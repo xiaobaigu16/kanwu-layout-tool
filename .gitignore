@@ -1,0 +1,9 @@
+# 本地存档与临时文件不入库
+*.json
+!package.json
+*.zip
+*.pdf
+*.docx
+*.log
+.DS_Store
+Thumbs.db
