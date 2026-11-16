@@ -1,0 +1,430 @@
+:root{
+  --bg:#eef1f5; --panel:#fff; --line:#dce1e8; --ink:#1f2733; --sub:#6b7686;
+  --brand:#2f6f8f; --brand-d:#23556e; --accent:#3a8fb7; --sel:#cdeaf5;
+  /* 页面几何由 JS 注入（像素），以下为 216×303mm 成品的兜底值 */
+  --pw:587px; --ph:823px; --mt:41px; --mb:95px; --ml:62px; --mr:64px;
+  --col-gap:33px;
+  --tab-w:24px; --tab-h:104px; --tab-x:0px;   /* v3.4 栏目框贴页边（JS 注入同值） */
+  --qr:54px; --qr-x:57px; --qr-y:65px;
+}
+*{box-sizing:border-box}
+/* 整页不滚动，滚动只发生在左侧栏与右侧预览区内部，避免嵌套 flex 把容器撑高导致滚不动 */
+html,body{margin:0;height:100%;overflow:hidden}
+body{
+  font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+  color:var(--ink); background:var(--bg); display:flex; flex-direction:column;
+}
+.topbar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+  padding:8px 14px;background:linear-gradient(90deg,var(--brand),var(--brand-d));color:#fff;
+  box-shadow:0 2px 6px rgba(0,0,0,.12);z-index:20;gap:10px}
+.brand{font-size:15px;font-weight:700;letter-spacing:.5px;white-space:nowrap}
+.brand .ver{font-size:10px;font-weight:500;opacity:.75;border:1px solid rgba(255,255,255,.45);
+  border-radius:3px;padding:1px 4px;margin-left:4px;vertical-align:2px}
+.top-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.btn{background:#fff;color:var(--brand-d);border:none;border-radius:6px;
+  padding:6px 9px;font-size:12px;cursor:pointer;font-weight:600;white-space:nowrap}
+.btn:hover{background:#eaf6fb}
+.btn:active{transform:translateY(1px);background:#d6eefb}
+.btn-primary{background:#ffd56b;color:#5a3d00}
+.btn-primary:hover{background:#ffc94a}
+.btn-ghost{background:rgba(255,255,255,.15);color:#fff}
+.btn-ghost:hover{background:rgba(255,255,255,.28)}
+/* 操作反馈状态条：让每次点击都看得见结果 */
+.status-bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;
+  background:#eaf5ee;border-bottom:1px solid #cfe6d7;color:#1f6e43;
+  font-size:12px;padding:5px 16px;min-height:27px}
+.status-bar.err{background:#fdecec;border-color:#f0b3b3;color:#b52d2d}
+.status-bar.busy{background:#fff6e2;border-color:#f2dcaa;color:#8a6100}
+.status-bar .st-time{margin-left:auto;color:#8b9a93;font-size:11px}
+
+.layout{flex:1 1 0;display:flex;min-height:0;height:0}
+.sidebar{width:300px;flex:0 0 300px;background:var(--panel);border-right:1px solid var(--line);
+  overflow-y:auto;padding:12px;min-height:0;overscroll-behavior:contain}
+.panel{margin-bottom:14px;padding:10px;border:1px solid var(--line);border-radius:8px;background:#fafbfc}
+.panel h3{margin:0 0 8px;font-size:13px;color:var(--brand-d)}
+.panel h3 small{font-weight:400;color:var(--sub);font-size:11px}
+.hint{font-size:11px;color:var(--sub);margin:6px 0 0;line-height:1.5}
+.doc-list{list-style:none;margin:0;padding:0}
+.doc-list-tools{margin:4px 0 2px}
+.doc-list li{display:flex;align-items:center;gap:6px;padding:6px 8px;margin-bottom:6px;
+  background:#fff;border:1px solid var(--line);border-radius:6px;font-size:12.5px;cursor:grab}
+.doc-list li.dragging{opacity:.5}
+.doc-list li .grip{color:#b6c0cc;font-size:13px}
+.doc-list li .doc-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.doc-list li .doc-pages{color:var(--sub);font-size:11px}
+.toc-tools{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.btn-sm{font-size:11.5px;padding:4px 8px;border:1px solid var(--line);background:#fff;border-radius:5px;cursor:pointer}
+.btn-sm:hover{background:#eef6fa}
+.chk{font-size:12px;color:var(--sub);display:flex;align-items:center;gap:4px}
+.toc-list{list-style:none;margin:0;padding:0}
+.toc-list li{font-size:12px;padding:4px 6px;border-bottom:1px dashed var(--line);display:flex;gap:6px;align-items:center}
+.toc-list li input{flex:1;border:1px solid var(--line);border-radius:4px;padding:2px 4px;font-size:12px}
+.toc-list li .lvl{color:var(--sub);font-size:10px}
+.toc-list li .pg{width:34px;text-align:center;color:var(--brand-d);font-weight:600}
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px}
+.field-grid label,.field-full{font-size:11.5px;color:var(--sub);display:flex;flex-direction:column;gap:3px}
+.field-grid input,.field-grid select,.field-full input{font-size:12px;padding:4px 6px;border:1px solid var(--line);border-radius:5px;color:var(--ink)}
+.field-full{margin-bottom:8px}
+
+.main{flex:1 1 0;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
+.toolbar{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:8px 12px;
+  background:var(--panel);border-bottom:1px solid var(--line);z-index:10}
+.tb-group{display:flex;gap:4px;align-items:center;padding:3px 6px;background:#f4f7fa;border:1px solid var(--line);border-radius:6px}
+.tb-btn{ border:1px solid var(--line);background:#fff;border-radius:5px;padding:4px 8px;font-size:13px;cursor:pointer;min-width:30px}
+.tb-btn:hover{background:#eaf6fb}
+.tb-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.tb-label{font-size:11px;color:var(--sub)}
+.toolbar select{font-size:12px;padding:4px;border:1px solid var(--line);border-radius:5px}
+
+/* 预览区独立滚动：flex:1 1 0 + min-height:0 是嵌套 flex 能滚动的关键 */
+.preview-scroll{flex:1 1 0;min-height:0;overflow-x:auto;overflow-y:scroll;
+  overscroll-behavior:contain;-webkit-overflow-scrolling:touch;padding:24px;background:var(--bg)}
+.preview{display:flex;flex-direction:column;align-items:center;gap:24px;min-width:min-content}
+
+/* 单页 */
+.page{position:relative;width:var(--pw);height:var(--ph);background:#fff;
+  box-shadow:0 4px 16px rgba(0,0,0,.14);overflow:hidden}
+.page .page-header{position:absolute;top:0;left:0;right:0;height:var(--mt);
+  padding:8px var(--mr) 0 var(--ml);display:flex;align-items:flex-end;justify-content:center;
+  font-size:calc(8px * var(--zs));color:var(--sub);border-bottom:0}
+.page .page-footer{position:absolute;bottom:0;left:0;right:0;height:var(--mb);
+  padding:6px var(--mr) calc(var(--mb) * 0.34) var(--ml);display:flex;
+  align-items:flex-end;justify-content:center;font-size:calc(8px * var(--zs));color:var(--sub)}
+/* 通栏区要向左扩到 12mm（成品标题/编者按比双栏左边界 22.9mm 更靠左），
+   因此 page-body 自身不裁剪，由 full-zone / col-zone 各自 overflow:hidden 裁剪 */
+.page .page-body{position:absolute;top:var(--mt);bottom:var(--mb);left:var(--ml);right:var(--mr);
+  overflow:visible}
+.page .content-flow{height:100%;column-gap:var(--col-gap)}
+.page.cols-2 .content-flow{column-count:2}
+
+/* 内容块（可编辑） */
+.blk{outline:none;margin:0 0 calc(6px * var(--zs));word-break:break-word}
+.blk:focus{box-shadow:0 0 0 2px var(--accent) inset;border-radius:3px}
+.blk.h1{font-size:22px;font-weight:700;margin:14px 0 8px;color:var(--brand-d)}
+.blk.h2{font-size:18px;font-weight:700;margin:12px 0 6px}
+.blk.h3{font-size:15px;font-weight:600;margin:10px 0 4px}
+/* 图注 / 表题统一由下方「块级模板样式」的 .blk.caption 定义（9pt 加粗黑字居中），
+   v3.2 删掉这里重复的 11px 灰色定义，避免两处样式互相打架 */
+.blk img{max-width:100%;display:block;margin:6px auto;border:1px solid var(--line)}
+.blk.imgblk{text-align:center}
+/* 图注：纯文字（原来是虚线输入框，预览里很难看），小字加粗居中 */
+.blk .cap-text{display:block;min-height:1em;font-size:calc(9pt * var(--fs));
+  color:#222;font-weight:700;text-align:center;margin:4px auto 0;max-width:80%;outline:none}
+.page-num{font-variant-numeric:tabular-nums}
+
+/* 提示条固定在右上，不再盖住页面下缘 */
+.toast{position:fixed;top:56px;right:16px;left:auto;bottom:auto;max-width:340px;
+  transform:none;background:rgba(31,39,51,.92);color:#fff;padding:9px 14px;
+  border-radius:8px;font-size:12.5px;line-height:1.5;
+  opacity:0;pointer-events:none;transition:opacity .25s;z-index:99}
+.toast.show{opacity:1}
+
+/* ===== 刊物模板（复刻《2025年度雨露肝霖白皮书》· 2026-11-09 实测；v3.3 校准字号/字体） ===== */
+:root{
+  /* 白皮书实测三色：主绿 / 竖排标签底 / 目录标题块 */
+  --grn:#008000; --grn-d:#006400; --grn-tab:#58A830; --grn-toc:#187838;
+  --grn-bg:#eef7ea; --grn-line:#b8d8b0;
+  /* v3.3 字体统一：拉丁字符走 Times New Roman，中文走思源宋体（已装 Source Han Serif CN），
+     浏览器按字符逐一回退，正好实现「中文思源宋体 / 英文 Times New Roman」 */
+  --serif:"Times New Roman","思源宋体","Source Han Serif CN","Source Han Serif SC","Noto Serif CJK SC","SimSun",serif;
+  --sans:"Microsoft YaHei","PingFang SC",sans-serif;
+  --tab-bg:var(--grn-tab);   /* 竖排标签底色由 JS 按一级栏目写入 */
+  --full-inset:30px;   /* 通栏区相对双栏左边界向左外扩（10.9mm） */
+  /* --fs 缩放 pt 字号，--zs 缩放以 px/mm 写的装饰；两者由 JS 按预览比例注入 */
+  --fs:0.72; --zs:1;
+}
+/* 竖排栏目标签：8.9×38.1mm，亮草绿 #58A830，圆角，白字竖排，每页都有。
+   v3.2：用 flex 双向居中（竖排时 text-align:center 只管垂直方向，水平方向会贴边），
+   并按奇偶页左右镜像（成品「一页左、一页右」）。
+   v3.4：完全贴页边（--tab-x:0），只保留外侧两个圆角，内侧贴边更自然，与标题拉开距离。 */
+.page-tab{position:absolute;top:0;box-sizing:border-box;
+  width:var(--tab-w);height:var(--tab-h);background:var(--tab-bg,var(--grn-tab));color:#fff;
+  writing-mode:vertical-rl;letter-spacing:calc(3px * var(--zs));font-size:calc(11px * var(--zs));
+  font-weight:700;padding:calc(6px * var(--zs)) 0;line-height:1;
+  display:flex;align-items:center;justify-content:center;text-align:center;
+  font-family:var(--sans);z-index:1}
+.page-tab.tab-left{border-radius:0 calc(8px * var(--zs)) calc(8px * var(--zs)) 0}
+.page-tab.tab-right{border-radius:calc(8px * var(--zs)) 0 0 calc(8px * var(--zs))}
+.page-tab.tab-left{left:var(--tab-x);right:auto}
+.page-tab.tab-right{right:var(--tab-x);left:auto}
+/* 二维码：20×20mm，top 与上边距齐平 → 落在「标题水平带」内。
+   标题块设 min-height = 二维码高，保证二维码不会下探压到编者按（v3.2 修复）。 */
+.page-qr{position:absolute;top:var(--qr-y);right:var(--qr-x);width:var(--qr);height:var(--qr);
+  border:0;background:#fff;padding:0;object-fit:contain;z-index:2}
+/* 通栏区向左外扩到 12mm；分栏区保持 22.9mm 左边界。
+   v3.2：去掉 overflow:hidden（不再静默截断），双栏改 JS 显式两个真实栏容器，
+   不再用 CSS column-fill:auto 自动分栏（避免大块被推走留下半栏空白）。 */
+.page .full-zone{position:relative;left:calc(-1 * var(--full-inset));
+  width:calc(100% + var(--full-inset));overflow:visible;display:flow-root}
+/* 通栏区最后一个块的下外边距不能溢出到双栏区，否则会出现 12px 空隙把内容顶出版心 */
+.page .full-zone > .blk:last-child{margin-bottom:0}
+.page .col-zone{position:relative;display:flex;align-items:flex-start;
+  gap:var(--col-gap);overflow:visible}
+.page .col-zone .page-col{flex:1 1 0;min-width:0;height:100%;overflow:visible}
+/* v3.3 两栏首行齐平：清掉栏内块的上外边距，避免 label-head / highlight 自带 margin-top
+   把某一栏往下推（用户反馈「这里不对齐」） */
+.page .col-zone .page-col > .blk{margin-top:0}
+/* v3.3 参考文献带：固定在文章最后一页版心最底部（通栏贴底，上方留白保留） */
+.page .ref-zone{position:absolute;left:0;right:0;bottom:0;z-index:2;background:#fff;
+  padding-top:calc(6px * var(--zs))}
+.page .ref-zone .blk.references{font-size:calc(7.6pt * var(--fs));line-height:1.45;
+  margin:0 0 calc(2px * var(--zs))}
+/* v3.3 质检定位高亮 */
+.blk.qa-flash{box-shadow:0 0 0 3px #e0a020 inset !important;border-radius:3px;
+  animation:qaFlash 1.8s ease-out}
+@keyframes qaFlash{0%{background:#fff2c4}100%{background:transparent}}
+
+/* ---- 块级模板样式（主色 #008000；v3.3 正文 10.6pt，行距仍为成品实测 6.63mm ≈ 1.77 倍） ---- */
+.blk{font-family:var(--serif)}
+/* 文章标题：绿色粗体左对齐，前置「实心方块 + 空心描边方块」两个错位图标（悬挂）。
+   图标整体右移，避免与左侧竖排标签（右边缘约 32px）挤在一起显示不全 */
+.blk.art-title{position:relative;font-family:var(--serif);color:var(--grn);
+  font-size:calc(15pt * var(--fs));font-weight:700;text-align:left;line-height:1.5;
+  margin:0 0 calc(18px * var(--zs));padding-left:calc(44px * var(--zs));word-break:break-word}
+.blk.art-title::before{content:"";position:absolute;left:calc(4px * var(--zs));top:calc(6px * var(--zs));
+  width:calc(18px * var(--zs));height:calc(18px * var(--zs));background:var(--grn)}
+.blk.art-title::after{content:"";position:absolute;left:calc(16px * var(--zs));top:0;box-sizing:border-box;
+  width:calc(18px * var(--zs));height:calc(18px * var(--zs));border:2px solid var(--grn);background:#fff}
+/* 导语 / 编者按：通栏，段首绿色加粗，正文宋体两端对齐 */
+.blk.lead{font-family:var(--serif);font-size:calc(10.6pt * var(--fs));color:#222;
+  line-height:1.77;text-align:justify;margin:0 0 calc(16px * var(--zs))}
+.blk.lead .lead-kw{color:var(--grn);font-weight:700;font-family:var(--serif)}
+/* 文献来源：灰色小字（成品无此行，为不丢导入内容保留） */
+.blk.cite-box{font-family:var(--serif);background:none;border-left:2px solid var(--grn-line);
+  color:#7a8492;font-size:calc(8.5pt * var(--fs));line-height:1.6;padding:0 0 0 8px;
+  margin:0 0 calc(12px * var(--zs))}
+/* 绿色小标题：纯绿文字，顶格 */
+.blk.label-head{display:block;background:none;color:var(--grn);font-weight:700;
+  font-size:calc(10.5pt * var(--fs));font-family:var(--serif);padding:0;
+  margin:calc(10px * var(--zs)) 0 calc(6px * var(--zs));border-radius:0}
+/* 绿色重点句 */
+.blk.highlight{color:var(--grn);font-weight:700;font-size:calc(11pt * var(--fs));
+  font-family:var(--serif);line-height:1.7;margin:calc(7px * var(--zs)) 0 calc(8px * var(--zs))}
+/* 标题层级 */
+.blk.h1,.blk.h2,.blk.h3{font-family:var(--serif);color:var(--grn)}
+.blk.h1{font-size:calc(13pt * var(--fs))}
+.blk.h2{font-size:calc(11pt * var(--fs))}
+.blk.h3{font-size:calc(10pt * var(--fs))}
+/* 正文：思源宋体（英文 TNR）、首行缩进两字、两端对齐、行距 6.63mm（10.6pt × 1.77） */
+.blk.body{font-family:var(--serif);font-size:calc(10.6pt * var(--fs));line-height:1.77;
+  text-align:justify;text-justify:inter-ideograph;text-indent:2em;color:#222}
+/* 标注 / 图注 / 表题：小字加粗黑字居中，与正文明显区分（不再混成普通正文） */
+.blk.caption{font-family:var(--serif);font-size:calc(9pt * var(--fs));color:#222;font-weight:700;
+  text-align:center;margin:calc(5px * var(--zs)) 0 calc(10px * var(--zs))}
+/* 参考文献（v3.3）：连续编号 + 悬挂缩进，7.6pt，统一置于文章最后一页版心最底部 */
+.blk.references{font-family:var(--serif);font-size:calc(7.6pt * var(--fs));line-height:1.45;
+  text-align:left;color:#333;text-indent:-1.7em;padding-left:1.7em;
+  margin:0 0 calc(3px * var(--zs));word-break:break-word}
+.blk.imgblk{text-align:center}
+.blk img{border:0;margin:6px auto;max-width:85%;max-height:calc(45mm * var(--zs));width:auto;height:auto}
+/* 通栏的文献截图约 110mm 宽、居中 */
+.page .full-zone .blk.imgblk img{max-width:62%;max-height:calc(52mm * var(--zs))}
+/* 首页有二维码：标题右侧留安全区，且标题块至少与二维码等高 —— 二维码完全落在
+   标题水平带内，编者按一定从二维码下方开始，不会再被压住（施工单第 2 条） */
+.page.with-qr .blk.art-title{min-height:var(--qr);padding-right:calc(78px * var(--zs))}
+
+/* ---- 目录页（单栏、深绿标题块、三位补零页码） ---- */
+.page.toc-page::before{content:"目录";position:absolute;right:calc(16px * var(--zs));top:calc(46px * var(--zs));
+  font-size:calc(150px * var(--zs));font-weight:700;color:#f2f9f2;letter-spacing:calc(20px * var(--zs));
+  font-family:var(--sans);z-index:0;pointer-events:none;line-height:1}
+.toc-head{position:relative;z-index:1;display:flex;align-items:center;gap:0;
+  margin:0 0 calc(16px * var(--zs));border-bottom:0;padding:0}
+.toc-head .toc-cn{position:relative;overflow:hidden;background:var(--grn-toc);color:#fff;
+  font-size:calc(20pt * var(--fs));font-weight:700;
+  padding:calc(6px * var(--zs)) calc(26px * var(--zs)) calc(6px * var(--zs)) calc(12px * var(--zs));
+  line-height:1.2;font-family:var(--sans)}
+.toc-head .toc-cn::after{content:"";position:absolute;right:6px;top:-14px;
+  width:2px;height:80px;background:#fff;transform:rotate(28deg)}
+.toc-head .toc-en{color:var(--grn-toc);font-size:calc(13px * var(--fs));letter-spacing:3px;
+  font-weight:700;padding-left:10px;font-family:var(--sans)}
+/* v3.4 P2：一级分组标题改常规字重（往期样例为绿色细体，非加粗） */
+.toc-group{position:relative;z-index:1;color:var(--grn);font-weight:400;
+  font-size:calc(11pt * var(--fs));margin:calc(12px * var(--zs)) 0 calc(6px * var(--zs));
+  border-left:0;padding-left:0;font-family:var(--sans)}
+/* v3.3 目录二 / 三级分类标题（往期样例：会议名 → 主题 → 条目） */
+.toc-group2{position:relative;z-index:1;color:var(--grn);font-weight:700;
+  font-size:calc(10.5pt * var(--fs));margin:calc(9px * var(--zs)) 0 calc(4px * var(--zs));
+  padding-left:14px;font-family:var(--sans)}
+.toc-group3{position:relative;z-index:1;color:var(--grn);font-weight:600;
+  font-size:calc(10pt * var(--fs));margin:calc(7px * var(--zs)) 0 calc(3px * var(--zs));
+  padding-left:28px;font-family:var(--sans)}
+/* 目录页不占页码，正文首页 = 1 */
+.page.toc-page .page-num{display:none}
+.toc-line{position:relative;z-index:1;display:flex;align-items:flex-end;gap:6px;
+  font-size:calc(10pt * var(--fs));margin:0;line-height:1.64;
+  color:#222;text-decoration:none;font-family:var(--serif);cursor:pointer}
+.toc-line:hover{color:var(--grn-d)}
+.toc-line .dots{flex:1;border-bottom:1.5px dotted #999;align-self:flex-end;margin-bottom:5px}
+.toc-line .pg{color:#222;font-weight:600;min-width:34px;text-align:right;align-self:flex-end;font-variant-numeric:tabular-nums}
+.toc-line.lvl-h1{font-weight:400}   /* v3.4 P2：一级目录条目不加粗 */
+.toc-line.lvl-h2 .toc-txt{padding-left:14px}
+.toc-line.lvl-h3 .toc-txt{padding-left:28px;font-size:calc(9.5pt * var(--fs));color:#555}
+.toc-line.custom .toc-txt{font-style:italic;color:var(--grn-d)}
+.toc-txt{word-break:break-all}
+
+/* 目录手动编辑面板 */
+.toc-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:5px}
+.toc-empty{color:#9aa;font-size:12px;line-height:1.5;padding:6px 2px}
+.toc-item{display:flex;align-items:center;gap:4px;flex-wrap:wrap;
+  background:#fafdff;border:1px solid var(--line);border-radius:5px;padding:4px 6px}
+.toc-item .toc-lvl{font-size:11px;padding:2px 3px;border-radius:4px;border:1px solid var(--line)}
+.toc-item .toc-text{flex:1;min-width:90px;font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:4px}
+.toc-item .toc-page{width:40px;font-size:12px;padding:3px 4px;border:1px solid var(--line);border-radius:4px;text-align:center}
+.toc-acts{display:flex;gap:2px}
+.toc-acts button{font-size:11px;line-height:1;padding:3px 6px;border:1px solid var(--line);
+  background:#fff;border-radius:4px;cursor:pointer;color:#456}
+.toc-acts button:hover{background:var(--grn-bg);border-color:var(--grn)}
+.toc-acts button[data-act="del"]:hover{background:#fdecec;border-color:#e88;color:#c33}
+.toc-acts button[data-act="jump"]{color:var(--grn-d);font-weight:600}
+/* 二维码预览 */
+.qr-preview{width:64px;height:64px;border:1px solid var(--line);border-radius:4px;margin:6px 0}
+.doc-list li.selected{border-color:var(--grn);background:#f2fbf6;box-shadow:0 0 0 1px var(--grn) inset}
+
+/* ============ 顶部导出区 ============ */
+.top-actions select,.top-actions .btn{height:32px}
+.top-actions select{font-size:12.5px;padding:4px 6px;border:none;border-radius:6px;
+  background:#fff;color:var(--brand-d);font-weight:600;cursor:pointer;max-width:130px}
+
+/* ============ 文档列表：增删 ============ */
+.doc-list-tools{margin:6px 0 2px;display:flex;gap:6px;flex-wrap:wrap}
+.doc-list li{position:relative;padding-right:6px}
+.doc-list li .doc-del{flex:0 0 auto;width:20px;height:20px;line-height:1;padding:0;
+  border:1px solid var(--line);background:#fff;border-radius:4px;color:#98a3b0;
+  font-size:13px;cursor:pointer}
+.doc-list li .doc-del:hover{background:#fdecec;border-color:#e79b9b;color:#c33}
+.doc-empty{color:#9aa;font-size:12px;padding:8px 2px}
+
+/* 目录条目改为 JS 跳转（不再改 URL hash），保持可点手感 */
+.toc-line{cursor:pointer}
+
+/* 图片不超过栏宽/合理高度，避免导入稿件里的大图铺满整页 */
+.blk img{max-width:85%;max-height:calc(45mm * var(--zs));width:auto;height:auto}
+
+/* ============ PDF 效果预览弹窗 ============ */
+.modal{position:fixed;inset:0;z-index:80;background:rgba(20,28,38,.62);
+  display:flex;flex-direction:column}
+.modal[hidden]{display:none}
+.modal-bar{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:10px 16px;
+  background:#1f2b38;color:#fff;font-size:13px}
+.modal-bar .pm-title{font-weight:700;font-size:14px;margin-right:8px}
+.modal-bar .pm-info{color:#a9c1d6;font-size:12px;flex:1}
+.modal-bar button,.modal-bar select{background:#33475c;color:#fff;border:1px solid #4b647c;
+  border-radius:5px;padding:5px 10px;font-size:12.5px;cursor:pointer}
+.modal-bar button:hover{background:#45617b}
+.modal-bar button.pm-close{background:#c0392b;border-color:#c0392b}
+.modal-scroll{flex:1 1 0;min-height:0;overflow:auto;padding:28px;text-align:center}
+.pm-pages{display:inline-block;transform-origin:top center}
+.pm-page{display:block;margin:0 auto 26px;background:#fff;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.pm-loading{color:#dce9f4;font-size:14px;padding:60px 0}
+
+/* ============ v3.2：画布辅助线 / 溢出提示 / 质检与识别面板 ============ */
+/* 03 章：安全边距、分栏中线、通栏区边界 */
+.page.show-guides::after{content:"";position:absolute;
+  top:var(--mt);bottom:var(--mb);left:var(--ml);right:var(--mr);
+  border:1px dashed rgba(0,128,0,.38);pointer-events:none;z-index:6}
+.page.show-guides .col-zone::before{content:"";position:absolute;top:0;bottom:0;
+  left:50%;width:1px;background:rgba(0,128,0,.32);transform:translateX(-50%);
+  pointer-events:none;z-index:6}
+.page.show-guides .full-zone{outline:1px dotted rgba(47,111,143,.35);outline-offset:2px}
+/* 08 章：溢出页醒目标记（内容不裁切，让用户看见并可在质检面板定位） */
+.page.page-overflow{outline:3px solid rgba(200,48,48,.6);outline-offset:-3px}
+
+/* 状态条常驻质检徽标：导出前即可看到分级摘要 */
+.qa-badge{font-size:11px;font-weight:700;padding:2px 9px;border-radius:11px;
+  background:#e8f5e9;color:#1f6e43;border:1px solid #b7dfc0;white-space:nowrap}
+.qa-badge.has-warn{background:#fff6e2;color:#8a6100;border-color:#f2dcaa}
+.qa-badge.has-block{background:#fdecec;color:#b52d2d;border-color:#f0b3b3}
+
+/* 质检 / 识别结果面板（复用 .modal 骨架） */
+.qa-tabs{display:flex;gap:6px;padding:8px 16px 0;background:#1f2b38}
+.qa-tab{background:#33475c;color:#cfe0ef;border:1px solid #4b647c;border-bottom:0;
+  border-radius:6px 6px 0 0;padding:7px 16px;font-size:12.5px;cursor:pointer}
+.qa-tab.active{background:#f7f9f6;color:#1f6e43;font-weight:700}
+.qa-body{flex:1 1 0;min-height:0;overflow:auto;background:#f7f9f6;padding:14px 18px}
+.qa-summary{background:#fff;border:1px solid var(--line);border-radius:7px;
+  padding:10px 14px;margin-bottom:12px;font-size:12.5px;line-height:1.8}
+.qa-summary b{color:#1f6e43}
+.qa-summary .lv-block{color:#b52d2d;font-weight:700}
+.qa-summary .lv-warn{color:#8a6100;font-weight:700}
+.qa-summary .lv-tip{color:#456}
+.qa-issue{display:flex;gap:9px;align-items:flex-start;background:#fff;
+  border:1px solid var(--line);border-left:3px solid #ccc;border-radius:6px;
+  padding:8px 11px;margin-bottom:7px;font-size:12.5px}
+.qa-issue.lv-block{border-left-color:#c0392b;background:#fff8f8}
+.qa-issue.lv-warn{border-left-color:#e0a020;background:#fffdf5}
+.qa-issue.lv-tip{border-left-color:#4a90b8}
+.qa-issue .qa-cat{flex:0 0 88px;color:var(--sub);font-size:11.5px}
+.qa-issue .qa-msg{flex:1;color:#2b3540;line-height:1.6}
+.qa-issue .qa-pg{flex:0 0 auto;color:var(--brand-d);font-weight:600;font-size:11.5px}
+.qa-recog{background:#fff;border:1px solid var(--line);border-radius:6px;
+  padding:5px 9px;margin-bottom:6px;display:flex;gap:8px;align-items:center;font-size:12px}
+.qa-recog .rk{flex:0 0 22px;color:#9aa;text-align:right}
+.qa-recog .rtxt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;color:#2b3540}
+.qa-recog select{font-size:11.5px;padding:2px 4px;border:1px solid var(--line);
+  border-radius:4px;max-width:120px}
+.qa-recog .rst{font-size:10.5px;padding:1px 6px;border-radius:9px;white-space:nowrap}
+.qa-recog .rst.ok{background:#e8f5e9;color:#1f6e43}
+.qa-recog .rst.check{background:#fff6e2;color:#8a6100}
+.qa-recog .rst.fail{background:#fdecec;color:#b52d2d}
+.qa-recog .rmv{font-size:11px;border:1px solid var(--line);background:#fff;
+  border-radius:4px;padding:2px 5px;cursor:pointer;color:#456}
+.qa-recog .rmv:hover{background:#eaf6fb}
+.qa-doc{margin:10px 0 6px;font-size:12.5px;font-weight:700;color:#1f6e43}
+.qa-empty{color:#8a97a3;font-size:12.5px;padding:14px 2px}
+
+/* 打印（导出 PDF） */
+@media print{
+  @page{margin:0}
+  body{background:#fff}
+  .topbar,.sidebar,.toolbar,.toast,.qa-modal,.qa-badge,.page-nav{display:none !important}
+  .layout{display:block}
+  .preview-scroll{overflow:visible;padding:0;background:#fff}
+  .preview{gap:0;align-items:flex-start}
+  .page{box-shadow:none;page-break-after:always;break-after:page;overflow:hidden}
+  .blk:focus{box-shadow:none}
+  .blk.qa-flash{box-shadow:none !important;animation:none;background:transparent}
+}
+
+/* ============ v3.3：撤销/还原、栏目三级分类、WPS 式页面跳转条 ============ */
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.cat-row{display:flex;gap:4px;align-items:center;margin-bottom:6px}
+.cat-row label{flex:0 0 60px;font-size:11.5px;color:var(--sub)}
+.cat-row select{flex:1;min-width:0;font-size:12px;padding:4px 6px;
+  border:1px solid var(--line);border-radius:5px;color:var(--ink)}
+.cat-row .btn-sm{flex:0 0 auto;padding:3px 7px}
+.page-nav{flex:0 0 auto;display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:6px 12px;background:#fff;border-top:1px solid var(--line);
+  font-size:12px;color:var(--sub)}
+.page-nav button{border:1px solid var(--line);background:#f7fafc;border-radius:5px;
+  padding:3px 9px;font-size:12px;cursor:pointer;color:var(--brand-d);font-weight:600}
+.page-nav button:hover{background:#eaf6fb}
+.page-nav input{width:52px;text-align:center;border:1px solid var(--line);
+  border-radius:4px;padding:3px 4px;font-size:12px}
+.page-nav b{color:var(--ink)}
+.page-nav .nav-sep{width:1px;height:16px;background:var(--line);margin:0 4px}
+.page-nav .nav-doc{margin-left:8px;color:var(--grn-d);font-weight:600;
+  max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 质检面板：问题 / 识别结果条目可点击定位 */
+.qa-issue[data-qa-goto],.qa-recog[data-qa-goto]{cursor:pointer}
+.qa-issue[data-qa-goto]:hover,.qa-recog[data-qa-goto]:hover{background:#f0f8ff;border-color:#9cc7e0}
+.qa-issue .qa-pg[data-qa-goto]{text-decoration:underline;cursor:pointer}
+
+/* ============ v3.4：定位栏「目录」项 / 质检复选框与「已完成」态 ============ */
+.doc-list li.doc-toc-entry{background:#eef7ea;border-color:var(--grn-line);cursor:pointer;
+  color:var(--grn-d);font-weight:600}
+.doc-list li.doc-toc-entry:hover{background:#e2f2dc}
+.doc-list li.doc-toc-entry .doc-toc-tag{font-size:10px;color:#fff;background:var(--grn);
+  border-radius:8px;padding:1px 6px;flex:0 0 auto}
+.qa-tabs .qa-only{margin-left:auto;color:#cfe0ef;font-size:12px;display:flex;align-items:center;
+  gap:4px;cursor:pointer;user-select:none;padding:0 4px}
+.qa-tabs .qa-only input{cursor:pointer}
+.qa-chk{flex:0 0 auto;display:flex;align-items:center;gap:2px;font-size:10.5px;color:#5a6b78;
+  cursor:pointer;user-select:none;white-space:nowrap;padding:1px 5px 1px 0}
+.qa-chk input{cursor:pointer;width:14px;height:14px;accent-color:var(--grn);margin:0}
+.qa-issue.qa-done,.qa-recog.qa-done{opacity:.55;background:#eef7ef;border-left-color:#8bbf95}
+.qa-issue.qa-done .qa-msg,.qa-recog.qa-done .rtxt{text-decoration:line-through;text-decoration-color:#9bb5a1}
+.qa-issue.qa-done .qa-cat,.qa-recog.qa-done .rst{text-decoration:line-through;text-decoration-color:#9bb5a1}
+/* 独立 caption 空块给占位提示（限定 .preview 作用域：导出 PDF 的 clone 挂在 #preview 之外，
+   因此这些占位字只出现在编辑器里，不会被栅格化进 PDF / Word） */
+.preview .blk.caption:empty::before{content:"（点击输入图注）";color:#b7c0ca;font-style:italic;font-weight:400}
