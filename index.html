@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>刊物内页排版工具</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<!-- 顶部栏 -->
+<header class="topbar">
+  <div class="brand">📖 刊物内页排版工具 <span class="ver" id="appVer">v3.4</span></div>
+  <div class="top-actions">
+    <label class="btn btn-primary" for="fileInput">＋ 上传文件（zip / docx）</label>
+    <input type="file" id="fileInput" accept=".zip,.docx" multiple hidden />
+    <button class="btn" id="btnUndo" title="撤销上一步操作（Ctrl+Z）">↶ 撤销</button>
+    <button class="btn" id="btnRedo" title="还原撤销的操作（Ctrl+Y）">↷ 还原</button>
+    <button class="btn" id="btnSave" title="把当前排版存成 .json 存档文件，可拷走/下次打开">💾 保存</button>
+    <button class="btn" id="btnOpenArchive" title="打开之前保存的 .json 存档继续排版">📂 打开</button>
+    <input type="file" id="archiveInput" accept=".json,application/json" hidden />
+    <button class="btn" id="btnQa" title="排版质检 + 模块识别结果核对（文档 04 / 08 章）">🔎 质检</button>
+    <button class="btn" id="btnPreview">🔍 预览</button>
+    <select id="exportFormat" title="选择导出格式">
+      <option value="docx">Word (.docx)</option>
+      <option value="pdf">PDF (.pdf)</option>
+    </select>
+    <select id="pdfDpi" title="PDF 清晰度：DPI 越高放大越清晰，文件也越大">
+      <option value="144">标准 144 DPI</option>
+      <option value="216">高清 216 DPI</option>
+      <option value="300" selected>印刷 300 DPI</option>
+    </select>
+    <button class="btn" id="btnExport">导出</button>
+    <button class="btn btn-ghost" id="btnReset">清空</button>
+  </div>
+</header>
+<div class="status-bar" id="statusBar"><span id="statusText">就绪 · 上传 docx / zip 或点「📂 打开」存档开始</span><span class="qa-badge" id="qaBadge">质检：待检查</span><span class="st-time" id="statusTime"></span></div>
+
+<div class="layout">
+  <!-- 左侧：文档顺序 + 目录 -->
+  <aside class="sidebar">
+    <section class="panel">
+      <h3>① 文档顺序 <small>（拖拽调整）</small></h3>
+      <ul id="docList" class="doc-list"></ul>
+      <div class="doc-list-tools">
+        <button class="btn-sm" id="btnAddDoc" title="新建一个空白文档，可在右侧页面里直接输入内容">＋ 增加文档</button>
+        <button class="btn-sm" id="btnAppendFiles" title="继续选择 zip/docx 追加到列表，不会清空已有内容">＋ 追加文件</button>
+        <button class="btn-sm" id="btnResort" title="恢复为按文件名序号排序（撤销手动拖拽顺序）">⇄ 按文件名重排</button>
+        <button class="btn-sm" id="btnReTemplate" title="按刊物模板重新识别标题 / 编者按 / 绿色小标题 / 图注 / 双栏">✦ 重新套版</button>
+      </div>
+      <input type="file" id="appendInput" accept=".zip,.docx" multiple hidden />
+      <p class="hint">上传后自动套用刊物模板并默认双栏；可拖拽调序、点 ✕ 删除、＋ 增加空白文档。若样式识别不准，改完点「重新套版」。</p>
+    </section>
+    <section class="panel">
+      <h3>② 栏目设置 <small>（先点左侧文档名选中）</small></h3>
+      <div class="cat-row">
+        <label>一级目录</label>
+        <select id="docCat1" title="一级栏目（决定竖排标签底色与目录分组）"></select>
+        <button class="btn-sm" id="cat1Add" title="新增一级目录">＋</button>
+        <button class="btn-sm" id="cat1Del" title="删除当前一级目录">✕</button>
+      </div>
+      <div class="cat-row">
+        <label>二级分类</label>
+        <select id="docCat2" title="二级分类（如 APASL / EASL / AASLD）"></select>
+        <button class="btn-sm" id="cat2Add" title="新增二级分类">＋</button>
+        <button class="btn-sm" id="cat2Del" title="删除当前二级分类">✕</button>
+      </div>
+      <div class="cat-row">
+        <label>三级标题</label>
+        <select id="docCat3" title="三级标题（如 慢乙肝治疗相关）"></select>
+        <button class="btn-sm" id="cat3Add" title="新增三级标题">＋</button>
+        <button class="btn-sm" id="cat3Del" title="删除当前三级标题">✕</button>
+      </div>
+      <div class="field-grid">
+        <label class="field-full">竖排标签文字（默认取一级目录）
+          <input type="text" id="docColName" placeholder="如：期刊导读" />
+        </label>
+        <label>本文分栏
+          <select id="docCols">
+            <option value="0">跟随全局</option>
+            <option value="1">单栏</option>
+            <option value="2">双栏</option>
+          </select>
+        </label>
+      </div>
+      <label class="btn-sm" for="qrInput">上传二维码（本文首页右上）</label>
+      <input type="file" id="qrInput" accept="image/*" hidden />
+      <img id="qrPreview" class="qr-preview" hidden alt="" />
+      <button class="btn-sm" id="btnQrClear" hidden>移除二维码</button>
+      <p class="hint">一级 / 二级 / 三级均为单选，可「＋」新增、「✕」删除；含 AASLD / EASL / APASL 的稿件自动归入「会议撷萃」。竖排标签每页都有、按栏目配不同底色，并按「单页左 / 双页右」左右镜像。</p>
+    </section>
+    <section class="panel">
+      <h3>③ 目录 <small>（正文排完后自动带页码，可微调）</small></h3>
+      <div class="toc-tools">
+        <button class="btn-sm" id="btnRegenToc">重新提取</button>
+        <button class="btn-sm" id="btnAddToc">＋ 添加条目</button>
+        <label class="chk"><input type="checkbox" id="tocEnabled" checked /> 生成目录页</label>
+      </div>
+      <p class="hint">目录按栏目分组、带点线页码；预览中点击可跳转，导出 Word/PDF 为真实超链接。修改正文后点「重新提取」或改动会自动刷新页码。</p>
+      <ul id="tocList" class="toc-list"></ul>
+    </section>
+    <section class="panel">
+      <h3>④ 页面设置</h3>
+      <div class="field-grid">
+        <label>宽度(mm)<input type="number" id="pgW" value="216" step="0.1" /></label>
+        <label>高度(mm)<input type="number" id="pgH" value="303" step="0.1" /></label>
+        <label>上边距<input type="number" id="mgT" value="15" step="0.1" /></label>
+        <label>下边距<input type="number" id="mgB" value="35" step="0.1" /></label>
+        <label>左边距<input type="number" id="mgL" value="22.9" step="0.1" /></label>
+        <label>右边距<input type="number" id="mgR" value="23.5" step="0.1" /></label>
+        <label>分栏
+          <select id="cols">
+            <option value="1">单栏</option>
+            <option value="2">双栏</option>
+          </select>
+        </label>
+        <label>行距
+          <select id="lineH">
+            <option value="1">单倍</option>
+            <option value="1.5">1.5倍</option>
+            <option value="1.77" selected>1.77倍（成品 6.63mm）</option>
+            <option value="1.64">1.64倍</option>
+            <option value="1.75">1.75倍</option>
+            <option value="1.85">1.85倍</option>
+            <option value="2">双倍</option>
+          </select>
+        </label>
+      </div>
+      <label class="field-full">页眉文字
+        <input type="text" id="hdrText" placeholder="如：雨露肝霖 · 2026年第3期" />
+      </label>
+      <label class="field-full">页脚文字
+        <input type="text" id="ftrText" placeholder="如：内部交流 · 请勿外传" />
+      </label>
+      <label class="chk"><input type="checkbox" id="showPgNum" checked /> 显示页码</label>
+    </section>
+  </aside>
+
+  <!-- 中间：工具栏 + 预览 -->
+  <main class="main">
+    <div class="toolbar" id="toolbar">
+      <div class="tb-group">
+        <select id="blockStyle" title="段落样式（按白皮书模板）">
+          <option value="body">正文（首行缩进）</option>
+          <option value="art-title">文章标题（绿色）</option>
+          <option value="lead">导语 / 编者按</option>
+          <option value="cite-box">文献来源（小字）</option>
+          <option value="label-head">绿色小标题</option>
+          <option value="highlight">绿色重点句</option>
+          <option value="h1">一级标题</option>
+          <option value="h2">二级标题</option>
+          <option value="h3">三级标题</option>
+          <option value="caption">图注</option>
+          <option value="references">参考文献（悬挂缩进）</option>
+        </select>
+      </div>
+      <div class="tb-group">
+        <span class="tb-label">字体</span>
+        <select id="fontFamily" title="字体（作用于当前段落或选中文字）">
+          <option value="" selected>跟随模板（思源宋体 / Times New Roman）</option>
+          <option value="思源宋体">思源宋体（中文）</option>
+          <option value="Times New Roman">Times New Roman（英文）</option>
+          <option value="SimSun">宋体</option>
+          <option value="SimHei">黑体</option>
+          <option value="Microsoft YaHei">微软雅黑</option>
+          <option value="FangSong">仿宋</option>
+          <option value="KaiTi">楷体</option>
+          <option value="Arial">Arial</option>
+        </select>
+        <select id="fontSize" title="字号（pt，作用于当前段落或选中文字；数字是成品真实字号）">
+          <option value="" selected>字号</option>
+          <option value="7.6">7.6（参考文献）</option>
+          <option value="9">9（图注）</option>
+          <option value="10">10</option>
+          <option value="10.6">10.6（成品正文）</option>
+          <option value="12">12</option>
+          <option value="14">14</option>
+          <option value="16">16</option>
+          <option value="18">18</option>
+          <option value="20">20</option>
+          <option value="24">24</option>
+          <option value="28">28</option>
+          <option value="32">32</option>
+        </select>
+        <button class="tb-btn" data-cmd="bold" title="加粗"><b>B</b></button>
+        <button class="tb-btn" data-cmd="italic" title="斜体"><i>I</i></button>
+        <button class="tb-btn" data-cmd="underline" title="下划线"><u>U</u></button>
+      </div>
+      <div class="tb-group">
+        <span class="tb-label">对齐</span>
+        <select id="alignSelect" title="段落对齐方式">
+          <option value="left">左对齐</option>
+          <option value="center">居中</option>
+          <option value="right">右对齐</option>
+          <option value="justify">两端对齐</option>
+        </select>
+        <button class="tb-btn" data-cmd="justifyLeft" title="左对齐">⬅</button>
+        <button class="tb-btn" data-cmd="justifyCenter" title="居中">⬌</button>
+        <button class="tb-btn" data-cmd="justifyRight" title="右对齐">➡</button>
+        <button class="tb-btn" data-cmd="justifyFull" title="两端对齐">⬌⬌</button>
+      </div>
+      <div class="tb-group">
+        <button class="tb-btn" data-cmd="superscript" title="上标">x²</button>
+        <button class="tb-btn" data-cmd="subscript" title="下标">x₂</button>
+      </div>
+      <div class="tb-group">
+        <button class="tb-btn" id="btnFormatPainter" title="格式刷">🖌 格式刷</button>
+        <button class="tb-btn" id="btnFullWidth" title="通栏：该段横跨整页宽度（不分栏）">▤ 通栏</button>
+        <button class="tb-btn" id="btnPageBreak" title="在所选块前插入分页">⤓ 分页</button>
+        <button class="tb-btn" id="btnAddImage" title="插入图片">🖼 图片</button>
+        <button class="tb-btn" id="btnDeleteBlock" title="删除当前选中的段落/图片（导入稿件里多余的二维码可用它删掉）">✕ 删除本段</button>
+        <input type="file" id="imgInput" accept="image/*" hidden />
+      </div>
+      <div class="tb-group">
+        <span class="tb-label">行距</span>
+        <select id="selLineH" title="当前段落行距">
+          <option value="1">1.0</option>
+          <option value="1.25">1.25</option>
+          <option value="1.5">1.5</option>
+          <option value="1.77" selected>1.77（成品 6.63mm）</option>
+          <option value="1.64">1.64</option>
+          <option value="1.75">1.75</option>
+          <option value="2">2.0</option>
+        </select>
+      </div>
+      <div class="tb-group">
+        <span class="tb-label">预览</span>
+        <select id="zoomSelect" title="预览缩放比例（只改显示，不影响排版与导出尺寸）">
+          <option value="0.5">50%</option>
+          <option value="0.72" selected>72%（标准）</option>
+          <option value="1">100%</option>
+          <option value="1.25">125%</option>
+        </select>
+        <label class="chk" style="margin-left:6px" title="显示安全边距、分栏中线、通栏区边界">
+          <input type="checkbox" id="guideToggle" /> 辅助线
+        </label>
+      </div>
+    </div>
+
+    <div class="preview-scroll" id="previewScroll">
+      <div class="preview" id="preview"><!-- 页面在此渲染 --></div>
+    </div>
+    <!-- v3.3 页面跳转条（WPS 式） -->
+    <div class="page-nav" id="pageNav">
+      <button id="navToc" title="跳到目录页（物理第 1 页）">📖 目录</button>
+      <button id="navFirst" title="第一页">⟪</button>
+      <button id="navPrev" title="上一页">‹</button>
+      <span>第 <input type="number" id="navPage" min="1" value="1" /> / <b id="navTotal">0</b> 页</span>
+      <button id="navNext" title="下一页">›</button>
+      <button id="navLast" title="最后一页">⟫</button>
+      <button id="navJump" title="跳到输入的页码">跳转</button>
+      <span class="nav-sep"></span>
+      <span class="nav-doc" id="navDoc">—</span>
+    </div>
+  </main>
+</div>
+
+<!-- PDF 效果预览弹窗（所见即最终导出的 PDF 页面） -->
+<div id="previewModal" class="modal" hidden>
+  <div class="modal-bar">
+    <span class="pm-title">PDF 效果预览</span>
+    <span class="pm-info" id="pmInfo">正在生成…</span>
+    <button id="pmZoomOut">－ 缩小</button>
+    <button id="pmZoomIn">＋ 放大</button>
+    <button id="pmZoomFit">适应宽度</button>
+    <button class="pm-close" id="pmClose">关闭</button>
+  </div>
+  <div class="modal-scroll" id="pmScroll">
+    <div class="pm-pages" id="pmPages"><div class="pm-loading">正在逐页生成 PDF 效果预览…</div></div>
+  </div>
+</div>
+
+<!-- 排版质检 / 模块识别结果（v3.3：可点击定位 + 即时刷新） -->
+<div id="qaModal" class="modal qa-modal" hidden>
+  <div class="modal-bar">
+    <span class="pm-title">🔎 排版质检 / 识别结果</span>
+    <span class="pm-info" id="qaInfo">按刊物规格自动检查</span>
+    <button class="pm-close" id="qaClose">关闭</button>
+  </div>
+  <div class="qa-tabs">
+    <button class="qa-tab active" data-qa-tab="report">质检报告</button>
+    <button class="qa-tab" data-qa-tab="recog">识别结果（可改类型与顺序）</button>
+    <label class="qa-only" title="只显示尚未勾选「已完成」的条目"><input type="checkbox" id="qaOnlyTodo" /> 只看未处理</label>
+  </div>
+  <div class="qa-body" id="qaBody"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="vendor/jszip.min.js"></script>
+<script src="vendor/html-to-image.js"></script>
+<script src="js/sample-assets.js"></script>
+<script src="js/util.js"></script>
+<script src="js/parser.js"></script>
+<script src="js/paginate.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/toc.js"></script>
+<script src="js/export-docx.js"></script>
+<script src="js/export-pdf.js"></script>
+<script src="js/qa.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
