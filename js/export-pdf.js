@@ -26,6 +26,41 @@ const ExportPdf = (() => {
   }
   function getDpi() { return DPI; }
 
+  // v3.5 V1：真矢量 PDF —— 走浏览器打印引擎。
+  // 关键：预览按 SCALE(0.72) 缩放，JS 把几何/字号/装饰都乘了 SCALE 写成 inline 变量。
+  // 若直接打印，.page 仍是 587px(≈155mm)，而纸张 216mm，内容会缩在左上、大片留白。
+  // 因此打印前按 1/SCALE 等比例放大所有变量（分页已由 JS 按 SCALE 排定，等比例放大
+  // 不改变换行/分页），打印后由 afterprint 还原。字号 --fs→1、装饰 --zs→1/BASE。
+  function computePrintGeom() {
+    const cs = getComputedStyle(document.documentElement);
+    const fs = parseFloat(cs.getPropertyValue('--fs')) || 0.72;   // 当前 SCALE
+    const k = fs > 0 ? 1 / fs : 1;
+    const vars = ['--pw', '--ph', '--mt', '--mb', '--ml', '--mr', '--col-gap',
+      '--tab-w', '--tab-h', '--tab-x', '--qr', '--qr-x', '--qr-y', '--full-inset'];
+    let decl = '';
+    vars.forEach(v => {
+      const n = parseFloat(cs.getPropertyValue(v));
+      if (!isNaN(n)) decl += v + ':' + (n * k).toFixed(3) + 'px!important;';
+    });
+    const zsNow = parseFloat(cs.getPropertyValue('--zs')) || 1;
+    decl += '--fs:1!important;--zs:' + (zsNow / fs).toFixed(5) + '!important;';
+    const pg = (window.App && App.state && App.state.page) || null;
+    const pageRule = pg ? '@page{size:' + pg.w + 'mm ' + pg.h + 'mm;margin:0}' : '';
+    return { decl, pageRule, scale: fs, k };
+  }
+  function printVector() {
+    if (!pageEls().length) throw new Error('还没有可导出的页面，请先上传稿件');
+    const g = computePrintGeom();
+    const st = document.createElement('style');
+    st.id = '__printGeom';
+    st.textContent = g.pageRule + '@media print{:root{' + g.decl + '}}';
+    document.head.appendChild(st);
+    const cleanup = () => { if (st.parentNode) st.parentNode.removeChild(st); };
+    window.addEventListener('afterprint', cleanup, { once: true });
+    setTimeout(cleanup, 120000);   // 兜底：某些浏览器不派发 afterprint
+    try { window.print(); } catch (e) { cleanup(); throw e; }
+  }
+
   function $(id) { return document.getElementById(id); }
   function pageEls() { return Array.from(document.querySelectorAll('#preview .page')); }
 
@@ -252,5 +287,5 @@ const ExportPdf = (() => {
     bindPreviewUI();
   }
 
-  return { run, preview, buildPdf, renderPages, closePreview, setDpi, getDpi };
+  return { run, preview, buildPdf, renderPages, closePreview, setDpi, getDpi, printVector, computePrintGeom };
 })();
