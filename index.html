@@ -9,7 +9,7 @@
 <body>
 <!-- 顶部栏 -->
 <header class="topbar">
-  <div class="brand">📖 刊物内页排版工具 <span class="ver" id="appVer">v3.4</span></div>
+  <div class="brand">📖 刊物内页排版工具 <span class="ver" id="appVer">v3.5</span></div>
   <div class="top-actions">
     <label class="btn btn-primary" for="fileInput">＋ 上传文件（zip / docx）</label>
     <input type="file" id="fileInput" accept=".zip,.docx" multiple hidden />
@@ -20,16 +20,8 @@
     <input type="file" id="archiveInput" accept=".json,application/json" hidden />
     <button class="btn" id="btnQa" title="排版质检 + 模块识别结果核对（文档 04 / 08 章）">🔎 质检</button>
     <button class="btn" id="btnPreview">🔍 预览</button>
-    <select id="exportFormat" title="选择导出格式">
-      <option value="docx">Word (.docx)</option>
-      <option value="pdf">PDF (.pdf)</option>
-    </select>
-    <select id="pdfDpi" title="PDF 清晰度：DPI 越高放大越清晰，文件也越大">
-      <option value="144">标准 144 DPI</option>
-      <option value="216">高清 216 DPI</option>
-      <option value="300" selected>印刷 300 DPI</option>
-    </select>
-    <button class="btn" id="btnExport">导出</button>
+    <button class="btn" id="btnShare" title="生成分享链接或自包含 HTML 文件，发给他人审阅效果">🔗 分享</button>
+    <button class="btn btn-primary" id="btnExport" title="导出真矢量 PDF（调起系统打印对话框，点「另存为 PDF」；文字可选中、任意放大不失真）">📄 导出 PDF（矢量）</button>
     <button class="btn btn-ghost" id="btnReset">清空</button>
   </div>
 </header>
@@ -38,8 +30,9 @@
 <div class="layout">
   <!-- 左侧：文档顺序 + 目录 -->
   <aside class="sidebar">
-    <section class="panel">
-      <h3>① 文档顺序 <small>（拖拽调整）</small></h3>
+    <section class="panel collapsible">
+      <h3 class="fold-head" data-fold="docArea">① 文档顺序 <small>（拖拽调整）</small> <span class="fold-ind">▾</span></h3>
+      <div class="fold-area" id="docArea">
       <ul id="docList" class="doc-list"></ul>
       <div class="doc-list-tools">
         <button class="btn-sm" id="btnAddDoc" title="新建一个空白文档，可在右侧页面里直接输入内容">＋ 增加文档</button>
@@ -49,6 +42,7 @@
       </div>
       <input type="file" id="appendInput" accept=".zip,.docx" multiple hidden />
       <p class="hint">上传后自动套用刊物模板并默认双栏；可拖拽调序、点 ✕ 删除、＋ 增加空白文档。若样式识别不准，改完点「重新套版」。</p>
+      </div>
     </section>
     <section class="panel">
       <h3>② 栏目设置 <small>（先点左侧文档名选中）</small></h3>
@@ -88,15 +82,17 @@
       <button class="btn-sm" id="btnQrClear" hidden>移除二维码</button>
       <p class="hint">一级 / 二级 / 三级均为单选，可「＋」新增、「✕」删除；含 AASLD / EASL / APASL 的稿件自动归入「会议撷萃」。竖排标签每页都有、按栏目配不同底色，并按「单页左 / 双页右」左右镜像。</p>
     </section>
-    <section class="panel">
-      <h3>③ 目录 <small>（正文排完后自动带页码，可微调）</small></h3>
+    <section class="panel collapsible">
+      <h3 class="fold-head" data-fold="tocArea">③ 目录 <small>（正文排完后自动带页码，可微调）</small> <span class="fold-ind">▾</span></h3>
+      <div class="fold-area" id="tocArea">
       <div class="toc-tools">
         <button class="btn-sm" id="btnRegenToc">重新提取</button>
         <button class="btn-sm" id="btnAddToc">＋ 添加条目</button>
         <label class="chk"><input type="checkbox" id="tocEnabled" checked /> 生成目录页</label>
       </div>
-      <p class="hint">目录按栏目分组、带点线页码；预览中点击可跳转，导出 Word/PDF 为真实超链接。修改正文后点「重新提取」或改动会自动刷新页码。</p>
+      <p class="hint">目录按栏目分组、带点线页码；预览中点击可跳转。修改正文后点「重新提取」或改动会自动刷新页码。</p>
       <ul id="tocList" class="toc-list"></ul>
+      </div>
     </section>
     <section class="panel">
       <h3>④ 页面设置</h3>
@@ -284,6 +280,31 @@
   <div class="qa-body" id="qaBody"></div>
 </div>
 
+<!-- 分享弹窗（v3.5）：线上长链接 + 自包含 HTML 文件 -->
+<div id="shareModal" class="modal" hidden>
+  <div class="modal-bar">
+    <span class="pm-title">🔗 分享排版效果</span>
+    <span class="pm-info" id="shareInfo">生成给他人审阅的链接或文件</span>
+    <button class="pm-close" id="shareClose">关闭</button>
+  </div>
+  <div class="share-body">
+    <div class="share-block">
+      <h4>① 线上分享链接</h4>
+      <p class="hint">把当前整刊排版压进链接，发给对方打开线上工具即可还原审阅（依赖网络；稿件含图片较多时链接会较长）。</p>
+      <div class="share-row">
+        <input type="text" id="shareUrl" readonly placeholder="点「生成链接」后在此复制" />
+        <button class="btn" id="btnGenLink">生成链接</button>
+        <button class="btn" id="btnCopyLink">复制链接</button>
+      </div>
+    </div>
+    <div class="share-block">
+      <h4>② 自包含 HTML 文件（离线可看）</h4>
+      <p class="hint">把排版与全部图片打包成单个 HTML 文件，对方双击即可在本地打开审阅，不依赖网络。</p>
+      <button class="btn btn-primary" id="btnGenHtml">📥 下载自包含 HTML</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script src="vendor/jszip.min.js"></script>
@@ -294,8 +315,8 @@
 <script src="js/paginate.js"></script>
 <script src="js/editor.js"></script>
 <script src="js/toc.js"></script>
-<script src="js/export-docx.js"></script>
 <script src="js/export-pdf.js"></script>
+<script src="js/share.js"></script>
 <script src="js/qa.js"></script>
 <script src="js/app.js"></script>
 </body>
