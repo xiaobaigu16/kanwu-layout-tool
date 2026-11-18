@@ -526,7 +526,7 @@ const Parser = (() => {
     const texts = bs.map(b => (b.type === 'image' ? '' : plainText(b.html)));
     const anchor = bs.findIndex((b, i) =>
       b.type !== 'image' && b.type !== 'art-title' &&
-      /^(参考文献|参考资料|References?)\s*[:：]?$/i.test(texts[i]));
+      /^(?:主要|部分|附|参考)?\s*(参考文献|参考资料|References?)\s*[:：]?$/i.test(texts[i]));
     if (anchor < 0) return;
     let seen = false;
     for (let i = anchor + 1; i < bs.length; i++) {
