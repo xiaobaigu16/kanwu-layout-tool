@@ -304,7 +304,8 @@ const App = (() => {
     return (p.h - p.mt - p.mb) * MM_PX * SCALE;
   }
   function columnWidthPx(cols) {
-    const bw = bodyWidthPx();
+    // v3.5 S2-A：双栏区与通栏区同宽（都左外扩 10.9mm 到 12mm），测量宽度须与 CSS 渲染一致
+    const bw = bodyWidthPx() + fullInsetPx();
     return cols === 1 ? bw : (bw - COL_GAP_MM * MM_PX * SCALE) / 2;
   }
 
@@ -772,10 +773,11 @@ const App = (() => {
       bs.forEach((b, bi) => {
         if (!ALLOWED_TYPES.includes(b.type)) return;
         const isRef = b.type === 'references';
-        // v3.4：紧贴文献列表前的「参考文献 / References」小标题一并归入页底带，
-        // 避免标题留在正文、条目却贴在页底造成视觉分裂（兼容英文与「参考资料」）
-        const isRefHead = ['label-head', 'h1', 'h2', 'h3'].includes(b.type) &&
-          /^(参考文献|参考资料|References?)\s*[:：]?$/i.test((b.html || '').replace(/<[^>]+>/g, '').trim()) &&
+        // v3.5 V4：紧贴文献列表前的文献小标题一并归入页底带，避免标题丢失。
+        // 放宽：兼容「主要参考文献 / 部分参考文献 / 附参考文献 / References」等前缀写法，
+        // 只要短标题以文献词收尾、且其后确有 references 块即认定（仍不影响正文）。
+        const isRefHead = ['label-head', 'h1', 'h2', 'h3', 'body'].includes(b.type) &&
+          /^(?:主要|部分|附|参考)?\s*(参考文献|参考资料|References?)\s*[:：]?$/i.test((b.html || '').replace(/<[^>]+>/g, '').trim()) &&
           bs.slice(bi + 1).some(x => x.type === 'references');
         const inRefZone = isRef || isRefHead;
         allItems.push({ b, doc: d, full: inRefZone ? true : blockFull(b), isRef: inRefZone });
@@ -877,6 +879,8 @@ const App = (() => {
           rows.push({ el: gh, isGroup: true });
         }
         let lastC2 = null, lastC3 = null;
+        // v3.5 V6 S4-A：目录条目按「分组内重新编号」加序号（image8 样例：换栏目归 1）
+        let seq = 0;
         buckets[key].forEach(e => {
           if (e.cat2 && e.cat2 !== lastC2) {
             const h2 = document.createElement('div');
@@ -895,7 +899,10 @@ const App = (() => {
             ev.preventDefault();
             if (e.targetId) scrollToBlock(e.targetId);
           });
-          a.innerHTML = `<span class="toc-txt">${U.escapeHtml(cleanTocText(e.text) || '（空）')}</span>` +
+          const txt = cleanTocText(e.text) || '（空）';
+          const numbered = (seq + 1) + '. ' + txt;
+          seq++;
+          a.innerHTML = `<span class="toc-txt">${U.escapeHtml(numbered)}</span>` +
             `<span class="dots"></span><span class="pg">${fmtPage(e.page)}</span>`;
           rows.push({ el: a, isGroup: false });
         });
@@ -1332,9 +1339,9 @@ const App = (() => {
   }
 
   // ---------- 状态条 / 存档 ----------
-  const APP_VER = 'v3.4';
-  // v3.4 改了图注数据结构 / 目录装箱 / 参考文献识别 / PDF 清晰度 / 质检勾选，换 key 避免恢复旧版存档
-  const STORE_KEY = 'kanwu_autosave_v3_4';
+  const APP_VER = 'v3.5';
+  // v3.5 改了双栏对齐 / 分享字段，换 key 避免恢复旧版存档
+  const STORE_KEY = 'kanwu_autosave_v3_5';
   let autoSaveTimer = null;
 
   function setStatus(msg, kind) {
@@ -1490,27 +1497,20 @@ const App = (() => {
       }
     });
 
-    // 导出：一个按钮 + 格式下拉；PDF 直接生成文件，不再弹打印对话框。
-    // v3.3：空状态给出明确提示并中止，不再自动载入示例（避免误触覆盖用户内容）。
+    // v3.5 V1：只保留 PDF 导出，且改为真矢量（走浏览器打印引擎）。
+    // 空状态给出明确提示并中止，不再自动载入示例。
     $('btnExport').addEventListener('click', () => {
       if (!state.docs.length) { U.toast('请先上传 docx / zip，或点「📂 打开」载入存档'); return; }
-      // 08 章：导出前给出质检摘要（常驻状态条徽标 + 有阻断级时补一条提示），
-      // 但不强制拦截导出，保持「点一下就有结果」的一键式体验
       if (window.QA && QA.blockingCount && QA.blockingCount() > 0) {
         const n = QA.blockingCount();
         setTimeout(() => U.toast(`导出前质检：${n} 项阻断级问题，详见「🔎 质检」`), 420);
       }
-      const fmt = $('exportFormat').value;
-      if (fmt === 'pdf') {
-        setStatus('正在生成 PDF 文件…', 'busy');
-        Promise.resolve(ExportPdf.run())
-          .then(() => setStatus('PDF 文件已导出（可到下载文件夹查看）', 'busy'))
-          .catch(e => setStatus('PDF 生成失败：' + (e.message || ''), 'err'));
-      } else {
-        setStatus('正在生成 Word 文件…', 'busy');
-        Promise.resolve(ExportDocx.run(state, lastPageLabels))
-          .then(() => setStatus('Word 文件已导出（可到下载文件夹查看）', 'busy'))
-          .catch(e => { console.error(e); setStatus('Word 导出失败：' + (e.message || ''), 'err'); });
+      setStatus('正在打开打印窗口：请在目标里选「另存为 PDF」即得矢量 PDF', 'busy');
+      try {
+        ExportPdf.printVector();
+        setTimeout(() => setStatus('打印窗口已打开：目标选「另存为 PDF」即可保存矢量文件', 'busy'), 600);
+      } catch (e) {
+        setStatus('矢量导出失败：' + (e.message || ''), 'err');
       }
     });
     $('btnPreview').addEventListener('click', () => {
@@ -1645,6 +1645,18 @@ const App = (() => {
     $('tocEnabled').addEventListener('change', e => { state.tocEnabled = e.target.checked; render(); });
     $('btnRegenToc').addEventListener('click', () => { buildToc(true); render(); U.toast('已重新提取目录（保留手动调整）'); });
     $('btnAddToc').addEventListener('click', () => { addTocEntry(); U.toast('已添加手工目录条目'); });
+
+    // ---- v3.5 V5：①③ 面板折叠 ----
+    document.querySelectorAll('.fold-head').forEach(h => {
+      h.addEventListener('click', () => {
+        const panel = h.closest('.panel');
+        if (panel) panel.classList.toggle('folded');
+      });
+    });
+
+    // ---- v3.5 V3：分享（交给 Share 模块，避免 app.js 过肥） ----
+    const sb = $('btnShare');
+    if (sb && window.Share) sb.addEventListener('click', () => Share.open());
   }
 
   function init() {
@@ -1663,7 +1675,9 @@ const App = (() => {
       setStatus('操作失败：' + ((r && r.message) || r || '未知'), 'err');
     });
     render();
-    if (!restoreAutoSave()) {
+    // v3.5 V3：优先从分享链接 #share= 还原（线上审阅），否则恢复本机自动暂存
+    const shared = !!(window.Share && Share.restoreFromHash && Share.restoreFromHash());
+    if (!shared && !restoreAutoSave()) {
       setStatus(`就绪 · ${APP_VER} · 上传 docx / zip 或点「📂 打开」存档开始`);
     }
   }
@@ -1672,6 +1686,8 @@ const App = (() => {
            setPageBreakBefore, setFullWidth, addImageBlock, scrollToBlock,
            applyBlockType, moveBlock, setGuides, TYPE_LABEL, ALLOWED_TYPES,
            undo, redo, tabColorFor, gotoQaTarget, scrollToPage, scrollToDoc, persistQa,
+           serialize: serializeState,
+           openArchiveData: data => { try { applyArchive(data); return true; } catch (e) { return false; } },
            __loadSample: loadSample,
            get state() { return state; },
            get lastPageLabels() { return lastPageLabels; },
