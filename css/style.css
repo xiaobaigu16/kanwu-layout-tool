@@ -158,15 +158,21 @@ body{
   width:calc(100% + var(--full-inset));overflow:visible;display:flow-root}
 /* 通栏区最后一个块的下外边距不能溢出到双栏区，否则会出现 12px 空隙把内容顶出版心 */
 .page .full-zone > .blk:last-child{margin-bottom:0}
+/* v3.5 S2-A：双栏区与通栏区一样向左外扩到 12mm，与编者按左边缘齐平；
+   右边界仍在页面右边距（192.5mm），两栏随之变宽。测量宽度在 app.js:columnWidthPx 同步。 */
 .page .col-zone{position:relative;display:flex;align-items:flex-start;
+  left:calc(-1 * var(--full-inset));width:calc(100% + var(--full-inset));
   gap:var(--col-gap);overflow:visible}
 .page .col-zone .page-col{flex:1 1 0;min-width:0;height:100%;overflow:visible}
 /* v3.3 两栏首行齐平：清掉栏内块的上外边距，避免 label-head / highlight 自带 margin-top
    把某一栏往下推（用户反馈「这里不对齐」） */
 .page .col-zone .page-col > .blk{margin-top:0}
-/* v3.3 参考文献带：固定在文章最后一页版心最底部（通栏贴底，上方留白保留） */
+/* v3.3 参考文献带：固定在文章最后一页版心最底部（通栏贴底，上方留白保留）
+   v3.5 V4：带上方加一条通栏横线（image4 样例），标题与条目左边缘对齐 */
 .page .ref-zone{position:absolute;left:0;right:0;bottom:0;z-index:2;background:#fff;
-  padding-top:calc(6px * var(--zs))}
+  border-top:1px solid var(--grn-line);padding-top:calc(8px * var(--zs))}
+.page .ref-zone .blk.label-head,.page .ref-zone .blk.h1,.page .ref-zone .blk.h2,.page .ref-zone .blk.h3{
+  padding-left:0;text-indent:0}
 .page .ref-zone .blk.references{font-size:calc(7.6pt * var(--fs));line-height:1.45;
   margin:0 0 calc(2px * var(--zs))}
 /* v3.3 质检定位高亮 */
@@ -237,8 +243,8 @@ body{
   width:2px;height:80px;background:#fff;transform:rotate(28deg)}
 .toc-head .toc-en{color:var(--grn-toc);font-size:calc(13px * var(--fs));letter-spacing:3px;
   font-weight:700;padding-left:10px;font-family:var(--sans)}
-/* v3.4 P2：一级分组标题改常规字重（往期样例为绿色细体，非加粗） */
-.toc-group{position:relative;z-index:1;color:var(--grn);font-weight:400;
+/* v3.5 V6：一级分组标题改回加粗（往期样例 image8：栏目名加粗、条目不加粗） */
+.toc-group{position:relative;z-index:1;color:var(--grn);font-weight:700;
   font-size:calc(11pt * var(--fs));margin:calc(12px * var(--zs)) 0 calc(6px * var(--zs));
   border-left:0;padding-left:0;font-family:var(--sans)}
 /* v3.3 目录二 / 三级分类标题（往期样例：会议名 → 主题 → 条目） */
@@ -256,7 +262,7 @@ body{
 .toc-line:hover{color:var(--grn-d)}
 .toc-line .dots{flex:1;border-bottom:1.5px dotted #999;align-self:flex-end;margin-bottom:5px}
 .toc-line .pg{color:#222;font-weight:600;min-width:34px;text-align:right;align-self:flex-end;font-variant-numeric:tabular-nums}
-.toc-line.lvl-h1{font-weight:400}   /* v3.4 P2：一级目录条目不加粗 */
+.toc-line.lvl-h1{font-weight:400}   /* v3.5 V6：目录条目（含一级）不加粗，仅栏目名加粗；序号在 JS 里加 */
 .toc-line.lvl-h2 .toc-txt{padding-left:14px}
 .toc-line.lvl-h3 .toc-txt{padding-left:28px;font-size:calc(9.5pt * var(--fs));color:#555}
 .toc-line.custom .toc-txt{font-style:italic;color:var(--grn-d)}
@@ -428,3 +434,33 @@ body{
 /* 独立 caption 空块给占位提示（限定 .preview 作用域：导出 PDF 的 clone 挂在 #preview 之外，
    因此这些占位字只出现在编辑器里，不会被栅格化进 PDF / Word） */
 .preview .blk.caption:empty::before{content:"（点击输入图注）";color:#b7c0ca;font-style:italic;font-weight:400}
+
+/* ============ v3.5：①③ 面板折叠 / 分享弹窗 ============ */
+.panel.collapsible>.fold-head{cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px}
+.panel.collapsible>.fold-head:hover{color:var(--brand)}
+.fold-ind{margin-left:auto;font-size:12px;color:var(--sub);transition:transform .15s}
+.panel.folded>.fold-head .fold-ind{transform:rotate(-90deg)}
+.panel.folded>.fold-area{display:none}
+.fold-area>.doc-list,.fold-area>.toc-list{max-height:300px;overflow-y:auto;overscroll-behavior:contain;
+  padding-right:4px}
+/* 分享弹窗 */
+.share-body{flex:1 1 0;min-height:0;overflow:auto;padding:20px 24px;background:#f7f9f6}
+.share-block{background:#fff;border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:16px}
+.share-block h4{margin:0 0 6px;font-size:14px;color:var(--brand-d)}
+.share-block .hint{margin:0 0 12px}
+.share-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.share-row input{flex:1;min-width:220px;font-size:12px;padding:7px 9px;border:1px solid var(--line);
+  border-radius:5px;color:var(--ink)}
+/* 打印（矢量 PDF）：隐藏所有编辑界面，只保留排版页面，按物理尺寸分页 */
+@media print{
+  @page{size:216mm 303mm;margin:0}
+  html,body{height:auto;overflow:visible;background:#fff}
+  .topbar,.status-bar,.sidebar,.toolbar,.page-nav,.toast,.modal,.qa-badge,#shareModal{display:none !important}
+  .layout,.main,.preview-scroll,.preview{display:block !important;width:auto;height:auto;
+    overflow:visible;padding:0;margin:0;background:#fff;gap:0}
+  .preview .page{box-shadow:none;margin:0;page-break-after:always;break-after:page;
+    -webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .preview .page:last-child{page-break-after:auto;break-after:auto}
+  .blk:focus{box-shadow:none}
+  .blk.qa-flash{box-shadow:none !important;animation:none;background:transparent}
+}
