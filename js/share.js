@@ -1,152 +1,110 @@
-/* 分享（v3.5 V3）：把当前整刊排版生成给他人审阅的载体
- *  - 线上长链接：serializeState → JSON → LZ 压缩 → base64 → URL hash（#share=…）
- *  - 自包含 HTML：当前 #preview 的页面 HTML + 样式表 + 图片内联，双击即可本地打开
- * 纯前端、无后端；链接依赖已上线的线上工具地址，文件则完全离线。
+/* 分享（v3.8）：PDF 印刷效果预览网页
+ *  - buildPreviewHtml()：用 ExportPdf.renderPages() 的逐页 JPEG 生成自包含 HTML
+ *  - genHtml()：导出 HTML 文件（长期存档兜底，可放任意静态托管）
+ *  - publish()：v3.8 新增——一键上传到匿名静态托管，直接得到别人可打开的 https 链接
+ *     实测 litterbox.catbox.moe：支持 CORS 跨域 POST、Content-Type:text/html、
+ *     无 Content-Disposition，浏览器直接打开为网页；时效可选 1h/12h/24h/72h。
+ *     注意：这是临时托管，到期自动删除，适合临时分享；永久链接需 GitHub Token。
  */
 const Share = (() => {
-  const ONLINE_URL = 'https://xiaobaigu16.github.io/kanwu-layout-tool/';
   function $(id) { return document.getElementById(id); }
+  const UPLOAD_API = 'https://litterbox.catbox.moe/resources/internals/api.php';
 
-  // ---------- LZW 压缩（标准算法：先 UTF-8 转字节，字面量码 0-255、字典码 256+） ----------
-  // 关键修复：上一版把「中文字面量码（如 测=27979）」直接当码输出，与字典编号空间冲突，
-  // 解码端无法区分，导致中文往返失败。现按 UTF-8 拆成字节（每个 0-255）后再做标准 LZW，
-  // 字面量与字典码分处不同空间，中文/emoji 均安全可逆。
-  function codesToB64(codes) {
-    const bytes = new Uint8Array(codes.length * 2);
-    codes.forEach((n, i) => { bytes[i * 2] = (n >> 8) & 0xff; bytes[i * 2 + 1] = n & 0xff; });
-    let bin = '';
-    for (let i = 0; i < bytes.length; i += 8192)
-      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-    return btoa(bin);
-  }
-  function b64ToCodes(b64) {
-    const bin = atob(b64);
-    if (bin.length % 2) return [];
-    const codes = [];
-    for (let i = 0; i < bin.length; i += 2) codes.push((bin.charCodeAt(i) << 8) | bin.charCodeAt(i + 1));
-    return codes;
-  }
-  function lzCompress(input) {
-    // UTF-8 字节流 → 每字节严格映射为一个 0-255 的字符（不能用 TextDecoder('latin1')：
-    // 它实际按 windows-1252 解码，会把 0x80-0x9F 的 UTF-8 连续字节映射成 U+2018/2019 等
-    // >255 字符，污染字节流导致解码失败）。
-    const bytes = new TextEncoder().encode(input);
-    let raw = '';
-    for (let i = 0; i < bytes.length; i += 8192)
-      raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
-    if (!raw.length) return '';
-    const dict = new Map();
-    const MAX = 65535;
-    let next = 256, w = raw[0], out = [];
-    for (let i = 1; i < raw.length; i++) {
-      const c = raw[i], wc = w + c;
-      if (dict.has(wc)) { w = wc; continue; }
-      out.push(w.length === 1 ? w.charCodeAt(0) : dict.get(w));
-      if (next <= MAX) dict.set(wc, next++);
-      w = c;
+  // 生成自包含预览页 HTML（图片内嵌，离线双击可看，上传后在线可看）
+  async function buildPreviewHtml(onProgress) {
+    if (!window.App || !App.state.docs.length) throw new Error('当前没有可分享的排版');
+    if (typeof ExportPdf === 'undefined' || !ExportPdf.renderPages) {
+      throw new Error('预览组件未就绪，请先打开一次 PDF 效果预览');
     }
-    out.push(w.length === 1 ? w.charCodeAt(0) : dict.get(w));
-    return codesToB64(out);
-  }
-  function lzDecompress(b64) {
-    if (!b64) return '';
-    const codes = b64ToCodes(b64);
-    if (!codes.length) return '';
-    const dict = new Map();
-    let next = 256;
-    let w = String.fromCharCode(codes[0]);
-    let out = w;
-    for (let i = 1; i < codes.length; i++) {
-      const k = codes[i];
-      let entry;
-      if (k < 256) entry = String.fromCharCode(k);
-      else if (dict.has(k)) entry = dict.get(k);
-      else if (k === next) entry = w + w[0];
-      else return null;
-      out += entry;
-      if (next <= 65535) dict.set(next++, w + entry[0]);
-      w = entry;
-    }
-    const bytes = new Uint8Array(out.length);
-    for (let i = 0; i < out.length; i++) bytes[i] = out.charCodeAt(i) & 0xff;
-    return new TextDecoder().decode(bytes);
-  }
-
-  function currentStateJson() {
-    const raw = JSON.stringify(window.App && App.serialize ? App.serialize() : null);
-    return raw;
-  }
-
-  function genLink() {
-    const inp = $('shareUrl');
-    if (!inp) return;
-    const json = currentStateJson();
-    if (!json || json === 'null') { U.toast('当前没有可分享的排版'); return; }
-    try {
-      const packed = lzCompress(json);
-      const url = ONLINE_URL + '#share=' + encodeURIComponent(packed);
-      inp.value = url;
-      $('shareInfo').textContent = `链接已生成（约 ${(url.length / 1024).toFixed(1)} KB，可直接复制发送）`;
-      U.toast('分享链接已生成，点「复制链接」发送');
-    } catch (e) {
-      U.toast('生成链接失败：' + (e.message || e));
-    }
-  }
-
-  function copyLink() {
-    const inp = $('shareUrl');
-    if (!inp || !inp.value) { U.toast('请先点「生成链接」'); return; }
-    inp.select();
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch (e) {}
-    if (!ok && navigator.clipboard) { navigator.clipboard.writeText(inp.value); ok = true; }
-    U.toast(ok ? '链接已复制' : '请手动选中链接复制');
-  }
-
-  // ---------- 自包含 HTML ----------
-  function collectCss() {
-    let css = '';
-    for (const sheet of document.styleSheets) {
-      try {
-        for (const rule of sheet.cssRules) css += rule.cssText + '\n';
-      } catch (e) { /* 跨域样式跳过 */ }
-    }
-    return css;
-  }
-  function genHtml() {
-    if (!window.App || !App.state.docs.length) { U.toast('当前没有可分享的排版'); return; }
-    const preview = document.getElementById('preview');
-    if (!preview) { U.toast('找不到预览内容'); return; }
-    // 抓取当前预览页 HTML（文字 + 图片 dataUrl 已在 DOM 内）
-    const pagesHtml = preview.innerHTML;
-    const css = collectCss();
-    const doc = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">' +
+    if (onProgress) onProgress('正在生成逐页印刷稿…');
+    const images = await ExportPdf.renderPages(false);
+    const p = App.state.page;
+    const cssW = p.w * (96 / 25.4);
+    const imgsHtml = images.map((im, i) =>
+      '<figure class="pg"><img src="' + im.dataUrl + '" alt="第' + (i + 1) + '页">' +
+      '<figcaption>第 ' + (i + 1) + ' / ' + images.length + ' 页</figcaption></figure>'
+    ).join('\n');
+    const title = (App.state.docs[0] && App.state.docs[0].name ? App.state.docs[0].name.replace(/\.[^.]+$/, '') : '刊物') + ' · PDF 效果预览';
+    const html = '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">' +
       '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-      '<title>刊物排版审阅稿</title><style>' + css +
-      '\nhtml,body{height:auto;overflow:auto;background:#eef1f5}' +
-      '.preview{padding:24px;gap:24px;align-items:center}' +
-      '</style></head><body><div class="preview">' + pagesHtml + '</div></body></html>';
-    const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
-    U.download(blob, '刊物排版审阅稿_' + Date.now() + '.html');
-    U.toast('自包含 HTML 已导出（对方双击即可离线审阅）');
+      '<title>' + title.replace(/</g, '&lt;') + '</title><style>' +
+      '*{box-sizing:border-box}body{margin:0;background:#2a2e2b;color:#e8ede9;' +
+      'font-family:"Microsoft YaHei","PingFang SC",sans-serif}' +
+      '.bar{position:sticky;top:0;z-index:9;display:flex;align-items:center;gap:12px;' +
+      'padding:10px 18px;background:#1d211e;border-bottom:1px solid #39423b;' +
+      'font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.3)}' +
+      '.bar b{color:#8fd6a3}.bar .sp{flex:1}.bar button{background:#2c3a30;color:#cfe8d6;' +
+      'border:1px solid #46624e;border-radius:5px;padding:5px 12px;cursor:pointer;font-size:12px}' +
+      '.bar button:hover{background:#3a5442}' +
+      '.wrap{padding:24px 16px 60px;text-align:center}' +
+      '.pg{margin:0 auto 30px;line-height:0}' +
+      '.pg img{display:block;margin:0 auto;max-width:none;width:' + cssW + 'px;' +
+      'background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.45)}' +
+      '.pg figcaption{font-size:12px;color:#9fb0a4;line-height:1.4;padding-top:8px}' +
+      '</style></head><body>' +
+      '<div class="bar"><b>' + title.replace(/</g, '&lt;') + '</b><span>' + images.length + ' 页 · ' +
+      p.w + '×' + p.h + 'mm</span><span class="sp"></span>' +
+      '<button onclick="setZ(1)">100%</button><button onclick="setZ(1.4)">放大</button>' +
+      '<button onclick="fit()">适应宽度</button></div>' +
+      '<div class="wrap" id="wrap">' + imgsHtml + '</div>' +
+      '<script>var z=1;function setZ(n){z=n;document.querySelectorAll(".pg img").forEach(function(i){' +
+      'i.style.width=' + cssW + '*z+"px"})}function fit(){var w=document.getElementById("wrap").clientWidth-40;' +
+      'setZ(Math.max(0.2,Math.min(1.4,w/' + cssW + ')))}fit()<\/script>' +
+      '</body></html>';
+    return { html, count: images.length };
   }
 
-  // ---------- 从 URL hash 还原（线上链接用） ----------
-  function restoreFromHash() {
-    const m = location.hash.match(/#share=([^&]+)/);
-    if (!m) return false;
+  async function genHtml() {
+    const prog = $('shareProgress');
     try {
-      const json = lzDecompress(decodeURIComponent(m[1]));
-      if (!json) throw new Error('数据解码失败');
-      const data = JSON.parse(json);
-      if (!data.docs || !data.docs.length) throw new Error('数据内容为空');
-      const ok = window.App && App.openArchiveData ? App.openArchiveData(data) : false;
-      if (ok) U.toast('已从分享链接还原排版，可审阅');
-      return ok;
+      const out = await buildPreviewHtml(msg => { if (prog) prog.textContent = msg; });
+      const blob = new Blob([out.html], { type: 'text/html;charset=utf-8' });
+      U.download(blob, 'PDF效果预览_' + Date.now() + '.html');
+      if (prog) prog.textContent = '已导出 · ' + out.count + ' 页';
+      U.toast('已导出 PDF 效果预览网页（' + out.count + ' 页）');
     } catch (e) {
-      console.error('share restore failed', e);
-      U.toast('分享链接数据无法还原：' + (e.message || e));
-      return false;
+      if (prog) prog.textContent = '';
+      console.error(e);
+      U.toast('导出失败：' + (e.message || e));
+    }
+  }
+
+  // v3.8：一键上传到匿名静态托管，返回可直接打开的 https 链接
+  async function publish() {
+    const prog = $('shareProgress');
+    const result = $('publishResult');
+    if (result) result.hidden = true;
+    try {
+      const ttl = ($('publishTtl') && $('publishTtl').value) || '24h';
+      const out = await buildPreviewHtml(msg => { if (prog) prog.textContent = msg; });
+      if (prog) prog.textContent = '正在上传到公开托管（' + out.count + ' 页）…';
+      const form = new FormData();
+      form.append('reqtype', 'fileupload');
+      form.append('time', ttl);
+      form.append('fileToUpload', new Blob([out.html], { type: 'text/html;charset=utf-8' }),
+        'preview_' + Date.now() + '.html');
+      const resp = await fetch(UPLOAD_API, { method: 'POST', body: form });
+      if (!resp.ok) throw new Error('上传失败（HTTP ' + resp.status + '）');
+      const url = (await resp.text()).trim();
+      if (!/^https?:\/\//.test(url)) throw new Error('上传未返回有效链接：' + url.slice(0, 80));
+      if (prog) prog.textContent = '发布成功 · ' + out.count + ' 页 · 有效期 ' + ttl;
+      if (result) {
+        result.hidden = false;
+        const inp = $('publishUrl'); if (inp) inp.value = url;
+        const openBtn = $('publishOpen'); if (openBtn) openBtn.onclick = () => window.open(url, '_blank', 'noopener');
+        const copyBtn = $('publishCopy');
+        if (copyBtn) copyBtn.onclick = async () => {
+          try { await navigator.clipboard.writeText(url); U.toast('链接已复制'); }
+          catch (e) {
+            if (inp) { inp.select(); document.execCommand('copy'); U.toast('链接已复制'); }
+          }
+        };
+      }
+      U.toast('已发布公开链接（有效期 ' + ttl + '），可直接发给他人打开');
+    } catch (e) {
+      if (prog) prog.textContent = '';
+      console.error(e);
+      U.toast('发布失败：' + (e.message || e) + '（可改用「导出 HTML 文件」）');
     }
   }
 
@@ -154,16 +112,17 @@ const Share = (() => {
     const m = $('shareModal');
     if (!m) return;
     m.hidden = false;
-    $('shareInfo').textContent = '生成给他人审阅的链接或文件';
+    $('shareInfo').textContent = '一键发布公开链接，或导出 HTML 文件长期存档';
+    const prog = $('shareProgress'); if (prog) prog.textContent = '';
+    const result = $('publishResult'); if (result) result.hidden = true;
   }
   function close() { const m = $('shareModal'); if (m) m.hidden = true; }
 
   function bind() {
     const on = (id, fn) => { const el = $(id); if (el) el.addEventListener('click', fn); };
     on('shareClose', close);
-    on('btnGenLink', genLink);
-    on('btnCopyLink', copyLink);
     on('btnGenHtml', genHtml);
+    on('btnPublish', publish);
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && $('shareModal') && !$('shareModal').hidden) close();
     });
@@ -171,6 +130,6 @@ const Share = (() => {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind);
   else bind();
 
-  return { open, close, genLink, genHtml, restoreFromHash, lzCompress, lzDecompress };
+  return { open, close, genHtml, publish };
 })();
 window.Share = Share;
