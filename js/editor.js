@@ -40,6 +40,19 @@ const Editor = (() => {
     if (fs) fs.value = el.dataset.pt || '';
     const ff = $('fontFamily');
     if (ff) ff.value = el.style.fontFamily || '';
+    // v3.8 P4：缩进 / 段间距 / 行距（可输入框）
+    const ti = el.style.textIndent;
+    const si = $('selIndent');
+    if (si) {
+      if (ti === '2em') si.value = 'indent2';
+      else if (ti === '0') si.value = 'none';
+      else if (ti === '-2em') si.value = 'hang2';
+      else si.value = '';
+    }
+    const sb = $('selSpaceBefore'); if (sb) sb.value = parseFloat(el.style.marginTop) || 0;
+    const sa = $('selSpaceAfter'); if (sa) sa.value = parseFloat(el.style.marginBottom) || 0;
+    const sl2 = $('selLineH');
+    if (sl2) sl2.value = el.style.lineHeight ? parseFloat(el.style.lineHeight).toString() : '1.79';
   }
 
   function markDirty() {
@@ -117,6 +130,29 @@ const Editor = (() => {
     U.toast('请先点击要设置的文字或段落');
   }
 
+  // 清空字号框 = 清除手动字号，恢复模板类字号（图注9 / 文献7.6 / 正文10.6 ...）。
+  // 旧逻辑 `if(e.target.value)` 直接跳过空值，导致被 Word 或手动设成大字号的块
+  // 无法恢复模板字号，表现为「字号调了没变化」。这里显式清除块与选区里的字号残留。
+  function clearFontSize() {
+    const el = currentEl();
+    if (!el) { U.toast('请先点击要清除字号的段落'); return; }
+    // 清除块自身 inline 字号与 data-pt
+    el.style.fontSize = '';
+    el.removeAttribute('data-pt');
+    // 清除块内所有手动包过的字号 span（保留其它格式如加粗/斜体）
+    el.querySelectorAll('[data-pt]').forEach(sp => {
+      sp.style.fontSize = '';
+      sp.removeAttribute('data-pt');
+      if (!sp.getAttribute('style') || sp.getAttribute('style').trim() === '') {
+        const attrs = Array.from(sp.attributes).map(a => a.name);
+        if (attrs.every(a => a === 'class')) sp.replaceWith(...sp.childNodes);
+      }
+    });
+    markDirty();
+    renderSoon();
+    U.toast('已恢复模板字号');
+  }
+
   function applyFontFamily(fam) {
     if (!fam) return;
     if (wrapSelection('font-family:' + fam)) return;
@@ -156,6 +192,62 @@ const Editor = (() => {
     markDirty();
     const al = $('alignSelect');
     if (al) al.value = align;
+  }
+
+  // v3.8 P4：缩进方式（首行缩进 2 字 / 顶格 / 悬挂缩进 2 字）
+  function applyIndent(mode) {
+    const el = currentEl();
+    if (!el) { U.toast('请先点击要设置的段落'); return; }
+    if (!mode) {
+      el.style.textIndent = '';
+      el.style.paddingLeft = '';
+    } else if (mode === 'indent2') {
+      el.style.textIndent = '2em';
+      el.style.paddingLeft = '';
+    } else if (mode === 'none') {
+      el.style.textIndent = '0';
+      el.style.paddingLeft = '';
+    } else if (mode === 'hang2') {
+      el.style.textIndent = '-2em';
+      el.style.paddingLeft = '2em';
+    }
+    markDirty();
+    renderSoon();
+  }
+
+  // v3.8 P4：段前 / 段后间距（pt）。段后距覆盖 .blk 默认的 margin-bottom。
+  function applySpacing(which, pt) {
+    const el = currentEl();
+    if (!el) { U.toast('请先点击要设置的段落'); return; }
+    const n = parseFloat(pt);
+    const px = isNaN(n) ? 0 : n;
+    if (which === 'before') el.style.marginTop = px + 'pt';
+    else el.style.marginBottom = px + 'pt';
+    markDirty();
+    renderSoon();
+  }
+
+  // v3.8 P9：有序 / 无序分点编号。序号用 CSS ::before 显示，不改原文文字（内容保真）。
+  // ol 序号按同一文档内连续的 ol 块自动累加；ul 统一显示圆点。
+  function toggleList(kind) {
+    const el = currentEl();
+    if (!el) { U.toast('请先点击要分点的段落'); return; }
+    const b = window.App && App.state ? App.state.blockMap[getBlockId()] : null;
+    if (!b) return;
+    const same = b.listType === kind;
+    b.listType = same ? '' : kind;
+    b.listN = 0;
+    // 重算同文档内连续 ol 块的序号
+    if (b.listType === 'ol') {
+      let n = 0;
+      (App.state.docs.find(d => d.blocks.indexOf(b) >= 0) || { blocks: [] }).blocks.forEach(bb => {
+        if (bb.listType === 'ol') { bb.listN = ++n; }
+        else n = 0;
+      });
+    }
+    markDirty();
+    renderSoon();
+    U.toast(same ? '已取消编号' : (kind === 'ol' ? '已设为有序分点' : '已设为无序分点'));
   }
 
   function insertPageBreak() {
@@ -217,12 +309,21 @@ const Editor = (() => {
     });
 
     $('blockStyle').addEventListener('change', e => applyBlockStyle(e.target.value));
-    $('fontSize').addEventListener('change', e => applyFontSize(e.target.value));
+    $('fontSize').addEventListener('change', e => {
+      if (e.target.value) applyFontSize(e.target.value);
+      else clearFontSize();
+    });
     const fontSel = $('fontFamily');
     if (fontSel) fontSel.addEventListener('change', e => applyFontFamily(e.target.value));
-    $('selLineH').addEventListener('change', e => applyBlockLineHeight(e.target.value));
+    $('selLineH').addEventListener('change', e => { if (e.target.value) applyBlockLineHeight(e.target.value); });
     const alignSel = $('alignSelect');
     if (alignSel) alignSel.addEventListener('change', e => applyBlockAlign(e.target.value));
+    // v3.8 P4 / P9：新增控件
+    const si = $('selIndent'); if (si) si.addEventListener('change', e => applyIndent(e.target.value));
+    const sb = $('selSpaceBefore'); if (sb) sb.addEventListener('change', e => applySpacing('before', e.target.value));
+    const sa = $('selSpaceAfter'); if (sa) sa.addEventListener('change', e => applySpacing('after', e.target.value));
+    const bol = $('btnOList'); if (bol) bol.addEventListener('click', e => { e.preventDefault(); toggleList('ol'); });
+    const bul = $('btnUList'); if (bul) bul.addEventListener('click', e => { e.preventDefault(); toggleList('ul'); });
 
     $('btnFormatPainter').addEventListener('click', e => {
       e.preventDefault();
