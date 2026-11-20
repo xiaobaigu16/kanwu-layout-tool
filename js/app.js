@@ -15,11 +15,13 @@ const App = (() => {
   const QR_X_MM = 21;           // 二维码距页面右边
   // v3.2：二维码不再写死 y=24mm（旧值下半部压在编者按上）。改为与内容区顶 / 标题首行齐平，
   // 落在「标题水平带」内（标题两行约 16mm 高，二维码 20mm 到 y≈35mm，编者按约从 35.6mm 起）。
-  const QR_Y_MM = 15;
-  const FULL_INSET_MM = 10.9;   // 通栏区相对双栏左边界向左外扩（22.9 → 12mm）
+  const QR_Y_MM = 20;           // v3.6：上边距改为 20mm，二维码随之与内容区顶齐平
+  const FULL_INSET_MM = 0;      // v3.6：取消左外扩，通栏与双栏统一从版心开始（左右页边距相等）
+  const BLEED_MM = 3;           // v3.6：打印出血线 3mm
   function fullInsetPx() { return FULL_INSET_MM * MM_PX * SCALE; }
-  const PAGE_DEFAULT = { w: 216, h: 303, mt: 15, mb: 35, ml: 22.9, mr: 23.5,
-                         cols: 1, lineH: 1.77, hdr: '', ftr: '', showNum: true };
+  // v3.6：用户确认的页边距——上左右 20mm、下 25mm；正文五号 10.5pt × 1.79 ≈ 成品 6.63mm
+  const PAGE_DEFAULT = { w: 216, h: 303, mt: 20, mb: 25, ml: 20, mr: 20,
+                         cols: 1, lineH: 1.79, hdr: '', ftr: '', showNum: true };
 
   // 白皮书模板：文章标题 / 编者按导语 / 文献来源 / 文献截图 横跨整页宽，之后正文走双栏
   const FULL_TYPES = ['art-title', 'lead', 'cite-box'];
@@ -34,6 +36,11 @@ const App = (() => {
     blockMap: {},
     selectedDocId: null,
     showGuides: false,   // 03 章：分栏线 / 安全边距辅助线
+    skin: 'light',       // v3.8 P1：外观皮肤 light / dark（只影响编辑器 UI）
+    coverImg: '',        // v3.8 P4：封面整页图片（dataURL）
+    backImg: '',         // v3.8 P4：封底整页图片（dataURL）
+    coverPdf: '',        // v3.8.1：封面 PDF 原始 base64（合并真矢量用）
+    backPdf: '',         // v3.8.1：封底 PDF 原始 base64（合并真矢量用）
     qaDoneIssues: [],    // v3.4：质检报告里用户勾选「已完成」的问题指纹
     // v3.3：三级栏目分类（可增删），一级决定竖排标签底色与目录分组
     categories: {
@@ -108,8 +115,10 @@ const App = (() => {
     return JSON.parse(JSON.stringify({
       page: state.page, docs: state.docs, tocEnabled: state.tocEnabled,
       tocEntries: state.tocEntries, selectedDocId: state.selectedDocId,
-      showGuides: state.showGuides, categories: state.categories,
-      qaDoneIssues: state.qaDoneIssues
+      showGuides: state.showGuides, skin: state.skin,
+      coverImg: state.coverImg, backImg: state.backImg,
+      coverPdf: state.coverPdf, backPdf: state.backPdf,
+      categories: state.categories, qaDoneIssues: state.qaDoneIssues
     }));
   }
   function updateHistoryButtons() {
@@ -125,10 +134,14 @@ const App = (() => {
     state.tocEntries = snap.tocEntries || [];
     state.selectedDocId = snap.selectedDocId || null;
     state.showGuides = !!snap.showGuides;
+    state.skin = snap.skin === 'dark' ? 'dark' : 'light';
+    state.coverImg = snap.coverImg || ''; state.backImg = snap.backImg || '';
+    state.coverPdf = snap.coverPdf || ''; state.backPdf = snap.backPdf || '';
     state.categories = Object.assign({}, DEFAULT_CATEGORIES, snap.categories || {});
     state.qaDoneIssues = Array.isArray(snap.qaDoneIssues) ? snap.qaDoneIssues.slice() : [];
     migrateImageCaptions();
     rebuildBlockMap();
+    applySkin();
     syncPageInputs();
     render();
     historyRestoring = false;
@@ -281,6 +294,7 @@ const App = (() => {
     root.setProperty('--qr-x', mm(QR_X_MM));
     root.setProperty('--qr-y', mm(QR_Y_MM));
     root.setProperty('--full-inset', fullInsetPx() + 'px');
+    root.setProperty('--bleed', mm(BLEED_MM));   // v3.6：出血线 3mm 随预览缩放
     // 字号按页面缩放同比缩小；--zs 供模板里以 px 写的装饰元素同比缩放
     root.setProperty('--fs', String(SCALE));
     root.setProperty('--zs', String(SCALE / BASE_SCALE));
@@ -304,7 +318,7 @@ const App = (() => {
     return (p.h - p.mt - p.mb) * MM_PX * SCALE;
   }
   function columnWidthPx(cols) {
-    // v3.5 S2-A：双栏区与通栏区同宽（都左外扩 10.9mm 到 12mm），测量宽度须与 CSS 渲染一致
+    // v3.6：双栏区与通栏区同宽（都从版心开始），测量宽度须与 CSS 渲染一致
     const bw = bodyWidthPx() + fullInsetPx();
     return cols === 1 ? bw : (bw - COL_GAP_MM * MM_PX * SCALE) / 2;
   }
@@ -323,6 +337,16 @@ const App = (() => {
       el.innerHTML = block.html || '';
       if (block.lineHeight) el.style.lineHeight = block.lineHeight;
       if (block.align) el.style.textAlign = block.align;
+      // v3.8 P4：缩进 / 段间距
+      if (block.textIndent != null) el.style.textIndent = block.textIndent;
+      if (block.paddingLeft != null) el.style.paddingLeft = block.paddingLeft;
+      if (block.marginTop != null) el.style.marginTop = block.marginTop;
+      if (block.marginBottom != null) el.style.marginBottom = block.marginBottom;
+      // v3.8 P9：分点编号（序号由 CSS ::before 显示，不改原文）
+      if (block.listType) {
+        el.dataset.list = block.listType;
+        if (block.listN) el.dataset.listN = String(block.listN);
+      }
       // 手动设过的字号 / 字体 / 颜色：用 calc(真实pt × --fs) 写入，预览缩放时自动跟随
       if (block.fontPt) {
         el.style.fontSize = `calc(${block.fontPt}pt * var(--fs))`;
@@ -350,6 +374,12 @@ const App = (() => {
       b.align = el.style.textAlign || null;
       b.alignLocked = !!el.style.textAlign;
       b.lineHeight = el.style.lineHeight || null;
+      b.textIndent = el.style.textIndent || null;
+      b.paddingLeft = el.style.paddingLeft || null;
+      b.marginTop = el.style.marginTop || null;
+      b.marginBottom = el.style.marginBottom || null;
+      b.listType = el.dataset.list || null;
+      b.listN = el.dataset.listN ? parseInt(el.dataset.listN, 10) : 0;
       b.fontPt = el.dataset.pt ? parseFloat(el.dataset.pt) : null;
       b.fontFamily = el.style.fontFamily || null;
       b.color = el.style.color || null;
@@ -409,7 +439,8 @@ const App = (() => {
     setGeometryCss();
     renderDocList();
     renderDocProps();
-    renderTocList();
+    syncCoverUI();
+    // v3.7：目录条目逐条编辑框已删，仅保留自动目录页；不再渲染 tocList
     const srcs = [];
     state.docs.forEach(d => d.blocks.forEach(b => { if (b.type === 'image' && b.src) srcs.push(b.src); }));
     ensureImages(srcs, renderPreview);
@@ -418,9 +449,46 @@ const App = (() => {
     updateHistoryButtons();
   }
 
+  // v3.7：三级栏目筛选状态（'' = 全部）
+  const docFilter = { c1: '', c2: '', c3: '' };
+
+  function fillFilterSelect(selId, values, cur, allLabel) {
+    const sel = $(selId); if (!sel) return;
+    const opts = [''].concat(values);
+    sel.innerHTML = opts.map(v => `<option value="${U.escapeHtml(v)}">${U.escapeHtml(v || allLabel)}</option>`).join('');
+    sel.value = opts.indexOf(cur) >= 0 ? cur : '';
+  }
+  // 依 c1/c2 联动刷新筛选项；返回当前筛选命中的文档
+  function refreshDocFilters() {
+    const c1s = [], c2s = [], c3s = [];
+    state.docs.forEach(d => {
+      if (d.cat1 && c1s.indexOf(d.cat1) < 0) c1s.push(d.cat1);
+      if (d.cat2 && c2s.indexOf(d.cat2) < 0) c2s.push(d.cat2);
+      if (d.cat3 && c3s.indexOf(d.cat3) < 0) c3s.push(d.cat3);
+    });
+    // 二级只列当前一级下的值，三级只列当前二级下的值
+    const c2scope = state.docs.filter(d => !docFilter.c1 || d.cat1 === docFilter.c1);
+    const c2list = [], c3list = [];
+    c2scope.forEach(d => { if (d.cat2 && c2list.indexOf(d.cat2) < 0) c2list.push(d.cat2); });
+    const c3scope = c2scope.filter(d => !docFilter.c2 || d.cat2 === docFilter.c2);
+    c3scope.forEach(d => { if (d.cat3 && c3list.indexOf(d.cat3) < 0) c3list.push(d.cat3); });
+    fillFilterSelect('filterCat1', c1s, docFilter.c1, '全部一级栏目');
+    fillFilterSelect('filterCat2', c2list, docFilter.c2, '全部二级分类');
+    fillFilterSelect('filterCat3', c3list, docFilter.c3, '全部三级标题');
+    const hit = state.docs.filter(d =>
+      (!docFilter.c1 || d.cat1 === docFilter.c1) &&
+      (!docFilter.c2 || d.cat2 === docFilter.c2) &&
+      (!docFilter.c3 || d.cat3 === docFilter.c3));
+    const cnt = $('filterCount');
+    if (cnt) cnt.textContent = (docFilter.c1 || docFilter.c2 || docFilter.c3)
+      ? `筛选出 ${hit.length} / ${state.docs.length} 篇` : `显示全部 ${state.docs.length} 篇`;
+    return hit;
+  }
+
   function renderDocList() {
     const ul = $('docList');
     ul.innerHTML = '';
+    const visible = refreshDocFilters();
     if (state.docs.length === 0) {
       ul.innerHTML = '<li class="doc-empty">（暂无文档，点「＋ 增加文档」或上传文件）</li>';
       return;
@@ -437,9 +505,26 @@ const App = (() => {
       });
       ul.appendChild(tocLi);
     }
-    state.docs.forEach((d, i) => {
+    if (!visible.length) {
+      ul.innerHTML += '<li class="doc-empty">（当前筛选无匹配文档，调整上方筛选条件）</li>';
+      return;
+    }
+    const filtering = !!(docFilter.c1 || docFilter.c2 || docFilter.c3);
+    let lastKey = null;
+    visible.forEach((d) => {
+      // 筛选时按栏目分组，插入分组标题，便于分类查看
+      if (filtering) {
+        const key = [d.cat1, d.cat2, d.cat3].filter(Boolean).join(' / ');
+        if (key !== lastKey) {
+          const hd = document.createElement('li');
+          hd.className = 'cat-group-hd';
+          hd.textContent = key || '未分类';
+          ul.appendChild(hd);
+          lastKey = key;
+        }
+      }
       const li = document.createElement('li');
-      li.draggable = true;
+      li.draggable = !filtering;   // 筛选态下不拖拽，避免跨越隐藏项的误操作
       li.dataset.id = d.id;
       if (d.id === state.selectedDocId) li.classList.add('selected');
       li.innerHTML = `<span class="grip">⋮⋮</span>` +
@@ -753,6 +838,36 @@ const App = (() => {
     };
   }
 
+  // v3.8 P1：外观皮肤（只切 body class，深色为原始基线，浅色为覆盖层）
+  function applySkin() {
+    document.body.classList.toggle('skin-light', state.skin !== 'dark');
+    document.body.classList.toggle('skin-dark', state.skin === 'dark');
+  }
+
+  // v3.8.1：封面 / 封底面板回显（已删缩略图，只控制「移除」按钮显隐）
+  function syncCoverUI() {
+    [['coverImg', 'coverClear'], ['backImg', 'backClear']].forEach(pair => {
+      const clr = $(pair[1]);
+      if (clr) clr.hidden = !state[pair[0]];
+    });
+  }
+
+  // v3.8 P4：封面 / 封底整页。按 216×303mm 铺满，不占正文页码，不进质检分页。
+  function buildCoverPage(src, kind) {
+    const p = state.page;
+    const page = document.createElement('div');
+    page.className = 'page cover-page ' + kind;
+    page.style.cssText = 'width:var(--pw);height:var(--ph);background:#fff;overflow:hidden;' +
+      'display:flex;align-items:stretch;justify-content:stretch';
+    page.setAttribute('data-cover', kind);
+    const img = document.createElement('img');
+    img.src = src;
+    img.alt = kind === 'cover' ? '封面' : '封底';
+    img.style.cssText = 'width:100%;height:100%;object-fit:fill;display:block';
+    page.appendChild(img);
+    return page;
+  }
+
   function renderPreviewInner() {
     const preview = $('preview');
     preview.innerHTML = '';
@@ -763,8 +878,10 @@ const App = (() => {
       if (window.QA && QA.onLayout) QA.onLayout();
       return;
     }
+    // v3.8 P4：封面整页插在最前
+    if (state.coverImg) preview.appendChild(buildCoverPage(state.coverImg, 'cover'));
     const cap = contentHeightPx();
-    const fullW = bodyWidthPx() + fullInsetPx();   // 通栏区比双栏区向左外扩 10.9mm
+    const fullW = bodyWidthPx() + fullInsetPx();   // v3.6：fullInsetPx()=0，通栏与双栏同宽
 
     // 收集条目：v3.3 参考文献从正文流里抽出，统一放到文章最后一页底部
     const allItems = [];
@@ -858,7 +975,12 @@ const App = (() => {
       // state.tocEntries 与正文标题原文一字不改（内容保真）。
       const cleanTocText = t => {
         const s = String(t == null ? '' : t);
-        return s.replace(/^\s*[【\[［]\s*[^】\]］]{1,12}\s*[】\]］]\s*/, '').trim() || s;
+        let out = s.replace(/^\s*[【\[［]\s*[^】\]］]{1,12}\s*[】\]］]\s*/, '').trim();
+        // v3.8 P3：去掉会议名前缀「APASL2025丨」「APASL 2025 |」等（竖线 丨/｜/| 分隔）。
+        // 只影响目录显示文字；栏目名已由 cat2 作为二级分类标题单独呈现，state/正文不改。
+        // 会议名允许字母/数字/中文及中间空格，总长不超过 22；竖线前必须是这类前缀字符。
+        out = out.replace(/^\s*[A-Za-z0-9\u4e00-\u9fa5][A-Za-z0-9\u4e00-\u9fa5\s]{1,21}?\s*[丨｜|]\s*/, '').trim();
+        return out || s;
       };
       const bucketOrder = [];
       const buckets = {};
@@ -1018,6 +1140,9 @@ const App = (() => {
       preview.appendChild(page);
     });
 
+    // v3.8 P4：封底整页插在最后（正文页渲染完之后）
+    if (state.backImg) preview.appendChild(buildCoverPage(state.backImg, 'back'));
+
     lastLayout = buildLayoutReport(pages, tocPages, layoutCap);
     updatePageNav();
     if (window.QA && QA.onLayout) QA.onLayout();
@@ -1088,7 +1213,7 @@ const App = (() => {
         if (!docs || docs.length === 0) { U.toast('未发现可解析的 docx'); return; }
         Parser.applyTemplate(docs);   // 导入即按白皮书模板套版
         state.docs.push(...docs);
-        sortDocs();
+        // v3.6：不再自动按文件名重排，保持用户导入的先后顺序（导入时间顺序）
         if (!state.selectedDocId && state.docs.length) state.selectedDocId = state.docs[0].id;
         rebuildBlockMap();
         buildToc(true);
@@ -1339,8 +1464,8 @@ const App = (() => {
   }
 
   // ---------- 状态条 / 存档 ----------
-  const APP_VER = 'v3.5';
-  // v3.5 改了双栏对齐 / 分享字段，换 key 避免恢复旧版存档
+  const APP_VER = 'v3.8';
+  // v3.6 沿用 v3.5 的 key（不丢用户当前排版），在 applyArchive 里迁移旧页边距到新规格
   const STORE_KEY = 'kanwu_autosave_v3_5';
   let autoSaveTimer = null;
 
@@ -1359,8 +1484,10 @@ const App = (() => {
       app: '刊物内页排版工具', version: APP_VER, savedAt: new Date().toISOString(),
       page: state.page, docs: state.docs, tocEnabled: state.tocEnabled,
       tocEntries: state.tocEntries, selectedDocId: state.selectedDocId,
-      showGuides: state.showGuides, categories: state.categories,
-      qaDoneIssues: state.qaDoneIssues
+      showGuides: state.showGuides, skin: state.skin,
+      coverImg: state.coverImg, backImg: state.backImg,
+      coverPdf: state.coverPdf, backPdf: state.backPdf,
+      categories: state.categories, qaDoneIssues: state.qaDoneIssues
     };
   }
 
@@ -1388,18 +1515,35 @@ const App = (() => {
     const t = $('tocEnabled'); if (t) t.checked = state.tocEnabled;
   }
 
+  // v3.6：旧存档若仍是旧版默认几何（上15/下35/左22.9/右23.5，行距1.77），
+  // 自动迁移到新规格（上左右20/下25，行距1.79）；用户自定义过的值原样保留。
+  function migrateLegacyPage(data) {
+    if (!data || !data.page) return;
+    const p = data.page;
+    const near = (a, b) => typeof a === 'number' && Math.abs(a - b) < 0.05;
+    if (near(p.mt, 15) && near(p.mb, 35) && near(p.ml, 22.9) && near(p.mr, 23.5) &&
+        (!p.lineH || near(p.lineH, 1.77))) {
+      data.page = Object.assign({}, p, { mt: 20, mb: 25, ml: 20, mr: 20, lineH: 1.79 });
+    }
+  }
+
   function applyArchive(data) {
     if (!data || !Array.isArray(data.docs)) throw new Error('存档格式不正确（缺少 docs）');
+    migrateLegacyPage(data);
     state.docs = data.docs;
     state.page = Object.assign({}, PAGE_DEFAULT, data.page || {});
     state.tocEnabled = data.tocEnabled !== false;
     state.tocEntries = Array.isArray(data.tocEntries) ? data.tocEntries : [];
     state.selectedDocId = data.selectedDocId || (state.docs[0] && state.docs[0].id) || null;
     state.showGuides = !!data.showGuides;
+    state.skin = data.skin === 'dark' ? 'dark' : 'light';
+    state.coverImg = data.coverImg || ''; state.backImg = data.backImg || '';
+    state.coverPdf = data.coverPdf || ''; state.backPdf = data.backPdf || '';
     state.categories = Object.assign({}, DEFAULT_CATEGORIES, data.categories || {});
     state.qaDoneIssues = Array.isArray(data.qaDoneIssues) ? data.qaDoneIssues.slice() : [];
     migrateImageCaptions();
     rebuildBlockMap();
+    applySkin();
     syncPageInputs();
     render();
   }
@@ -1468,6 +1612,18 @@ const App = (() => {
       e.target.value = '';
     });
     $('btnAddDoc').addEventListener('click', addEmptyDoc);
+    // v3.7：三级栏目筛选（联动：改一级重置二三级，改二级重置三级）
+    const bindFilter = (id, key, resetAfter) => {
+      const el = $(id); if (!el) return;
+      el.addEventListener('change', e => {
+        docFilter[key] = e.target.value;
+        resetAfter.forEach(k => { docFilter[k] = ''; });
+        renderDocList();
+      });
+    };
+    bindFilter('filterCat1', 'c1', ['c2', 'c3']);
+    bindFilter('filterCat2', 'c2', ['c3']);
+    bindFilter('filterCat3', 'c3', []);
     $('btnResort').addEventListener('click', () => {
       if (state.docs.length < 2) { U.toast('文档不足 2 个，无需重排'); return; }
       sortDocs(); render();
@@ -1643,6 +1799,140 @@ const App = (() => {
     $('ftrText').addEventListener('input', e => { state.page.ftr = e.target.value; render(); });
     $('showPgNum').addEventListener('change', e => { state.page.showNum = e.target.checked; render(); });
     $('tocEnabled').addEventListener('change', e => { state.tocEnabled = e.target.checked; render(); });
+
+    // v3.8 P1：外观皮肤切换（只改 UI，触发即时保存，不重排页面）
+    const skinSel = $('skinSelect');
+    if (skinSel) {
+      skinSel.value = state.skin === 'dark' ? 'dark' : 'light';
+      skinSel.addEventListener('change', e => {
+        state.skin = e.target.value === 'dark' ? 'dark' : 'light';
+        applySkin(); persistQa();
+        setStatus('外观已切换为' + (state.skin === 'dark' ? '深色' : '浅色') + '（下次打开自动沿用）', 'busy');
+      });
+    }
+
+    // v3.8.1：封面 / 封底上传（图片 或 PDF）。PDF 存原始 base64 供矢量合并，
+    // 同时用 pdf.js 渲染首页为图片供预览/打印显示。
+    const pdfState = { cover: 'coverPdf', back: 'backPdf' };
+    const renderPdfFirstPage = (arrayBuf) => new Promise((resolve, reject) => {
+      try {
+        if (!window.pdfjsLib) { reject(new Error('PDF 组件未加载')); return; }
+        if (window.pdfjsLib.GlobalWorkerOptions) {
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+        }
+        window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuf) }).promise.then(pdf => {
+          return pdf.getPage(1).then(page => {
+            const vp = page.getViewport({ scale: 2 });
+            const canvas = document.createElement('canvas');
+            canvas.width = vp.width; canvas.height = vp.height;
+            const ctx = canvas.getContext('2d');
+            return page.render({ canvasContext: ctx, viewport: vp }).promise.then(() => {
+              resolve(canvas.toDataURL('image/png'));
+            });
+          });
+        }).catch(reject);
+      } catch (e) { reject(e); }
+    });
+    const bindCover = (inputId, clearId, kind, imgKey) => {
+      const inp = $(inputId), clr = $(clearId);
+      const pdfKey = pdfState[kind];
+      if (!inp) return;
+      inp.addEventListener('change', e => {
+        const f = e.target.files[0]; if (!f) return;
+        const isPdf = /\.pdf$/i.test(f.name) || f.type === 'application/pdf';
+        const r = new FileReader();
+        r.onload = () => {
+          const finish = (displayDataUrl) => {
+            state[imgKey] = displayDataUrl;
+            state[pdfKey] = isPdf ? r.result : '';   // 原始 base64（含 data: 前缀）
+            if (clr) clr.hidden = false;
+            render();
+            U.toast((kind === 'cover' ? '封面' : '封底') + '已上传（' + (isPdf ? 'PDF' : '图片') + '）');
+          };
+          if (isPdf) {
+            // base64 → ArrayBuffer 供 pdf.js 渲染
+            const b64 = String(r.result).split(',')[1] || '';
+            try {
+              const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+              for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              renderPdfFirstPage(bytes.buffer).then(finish).catch(err => {
+                U.toast('PDF 渲染失败：' + err.message);
+              });
+            } catch (err) { U.toast('PDF 读取失败：' + err.message); }
+          } else {
+            finish(r.result);
+          }
+        };
+        if (isPdf) r.readAsDataURL(f); else r.readAsDataURL(f);
+        e.target.value = '';
+      });
+      if (clr) clr.addEventListener('click', () => {
+        state[imgKey] = '';
+        state[pdfKey] = '';
+        clr.hidden = true;
+        render(); U.toast('已移除' + (kind === 'cover' ? '封面' : '封底'));
+      });
+      if (clr && (state[imgKey] || state[pdfKey])) clr.hidden = false;
+    };
+    bindCover('coverInput', 'coverClear', 'cover', 'coverImg');
+    bindCover('backInput', 'backClear', 'back', 'backImg');
+
+    // v3.8.1：合并封面封底（真矢量）。用户先用「导出PDF（矢量）」导出正文PDF，
+    // 再点本按钮选择该正文PDF，工具把 封面PDF + 正文PDF + 封底PDF 合成成品。
+    const btnMerge = $('btnMergeCover');
+    if (btnMerge) btnMerge.addEventListener('click', () => {
+      if (!state.coverPdf && !state.backPdf) {
+        U.toast('请先上传 PDF 格式的封面或封底'); return;
+      }
+      if (!window.PDFLib || !window.PDFLib.PDFDocument) {
+        U.toast('PDF 合并组件未加载'); return;
+      }
+      // 动态建一个隐藏 file input 让用户选正文 PDF
+      const pick = document.createElement('input');
+      pick.type = 'file'; pick.accept = 'application/pdf,.pdf';
+      pick.style.display = 'none';
+      document.body.appendChild(pick);
+      pick.addEventListener('change', async ev => {
+        const bodyFile = ev.target.files[0];
+        document.body.removeChild(pick);
+        if (!bodyFile) return;
+        try {
+          setStatus('正在合并封面 / 正文 / 封底 PDF…', 'busy');
+          const arrBuf = await bodyFile.arrayBuffer();
+          const b64toAB = (dataUrl) => {
+            const b64 = String(dataUrl).split(',')[1] || '';
+            const bin = atob(b64); const bytes = new Uint8Array(bin.length);
+            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            return bytes.buffer;
+          };
+          const merged = await window.PDFLib.PDFDocument.create();
+          // 按 封面 → 正文 → 封底 顺序拷贝所有页
+          const sources = [];
+          if (state.coverPdf) sources.push({ name: '封面', data: b64toAB(state.coverPdf) });
+          sources.push({ name: '正文', data: arrBuf });
+          if (state.backPdf) sources.push({ name: '封底', data: b64toAB(state.backPdf) });
+          for (const src of sources) {
+            const doc = await window.PDFLib.PDFDocument.load(src.data, { ignoreEncryption: true });
+            const pages = await merged.copyPages(doc, doc.getPageIndices());
+            pages.forEach(p => merged.addPage(p));
+          }
+          const outBytes = await merged.save();
+          const blob = new Blob([outBytes], { type: 'application/pdf' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = '刊物成品_含封面封底.pdf';
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 4000);
+          setStatus('合并完成：封面 + 正文 + 封底 已导出为单个 PDF', 'ok');
+          U.toast('已导出含封面封底的完整 PDF');
+        } catch (err) {
+          console.error(err);
+          setStatus('合并失败：' + err.message, 'err');
+          U.toast('合并失败：' + err.message);
+        }
+      });
+      pick.click();
+    });
     $('btnRegenToc').addEventListener('click', () => { buildToc(true); render(); U.toast('已重新提取目录（保留手动调整）'); });
     $('btnAddToc').addEventListener('click', () => { addTocEntry(); U.toast('已添加手工目录条目'); });
 
@@ -1654,9 +1944,9 @@ const App = (() => {
       });
     });
 
-    // ---- v3.5 V3：分享（交给 Share 模块，避免 app.js 过肥） ----
-    const sb = $('btnShare');
-    if (sb && window.Share) sb.addEventListener('click', () => Share.open());
+    // ---- v3.6：分享入口移到 PDF 效果预览弹窗（与缩放按钮并列） ----
+    const psb = $('pmShare');
+    if (psb && window.Share) psb.addEventListener('click', () => Share.open());
   }
 
   function init() {
@@ -1665,6 +1955,7 @@ const App = (() => {
     bindUI();
     Editor.init();
     bindCompositionGuard();
+    applySkin();   // v3.8 P1：应用默认浅色 / 存档深色皮肤
     const ver = $('appVer'); if (ver) ver.textContent = APP_VER;
     // 任何脚本错误都直接显示在状态条上，避免「点了没反应」却看不到原因
     window.addEventListener('error', e => {
@@ -1675,9 +1966,8 @@ const App = (() => {
       setStatus('操作失败：' + ((r && r.message) || r || '未知'), 'err');
     });
     render();
-    // v3.5 V3：优先从分享链接 #share= 还原（线上审阅），否则恢复本机自动暂存
-    const shared = !!(window.Share && Share.restoreFromHash && Share.restoreFromHash());
-    if (!shared && !restoreAutoSave()) {
+    // v3.7：分享改为导出预览网页，不再有 URL hash 还原；仅恢复本机自动暂存
+    if (!restoreAutoSave()) {
       setStatus(`就绪 · ${APP_VER} · 上传 docx / zip 或点「📂 打开」存档开始`);
     }
   }
