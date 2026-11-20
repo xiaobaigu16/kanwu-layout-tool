@@ -9,20 +9,19 @@
 <body>
 <!-- 顶部栏 -->
 <header class="topbar">
-  <div class="brand">📖 刊物内页排版工具 <span class="ver" id="appVer">v3.5</span></div>
+  <div class="brand">刊物内页排版工具 <span class="ver" id="appVer">v3.8</span></div>
   <div class="top-actions">
-    <label class="btn btn-primary" for="fileInput">＋ 上传文件（zip / docx）</label>
+    <label class="btn btn-upload" for="fileInput">＋ 上传文件（zip / docx）</label>
     <input type="file" id="fileInput" accept=".zip,.docx" multiple hidden />
-    <button class="btn" id="btnUndo" title="撤销上一步操作（Ctrl+Z）">↶ 撤销</button>
-    <button class="btn" id="btnRedo" title="还原撤销的操作（Ctrl+Y）">↷ 还原</button>
-    <button class="btn" id="btnSave" title="把当前排版存成 .json 存档文件，可拷走/下次打开">💾 保存</button>
-    <button class="btn" id="btnOpenArchive" title="打开之前保存的 .json 存档继续排版">📂 打开</button>
+    <button class="btn btn-edit" id="btnUndo" title="撤销上一步操作（Ctrl+Z）">↶ 撤销</button>
+    <button class="btn btn-edit" id="btnRedo" title="还原撤销的操作（Ctrl+Y）">↷ 还原</button>
+    <button class="btn btn-save" id="btnSave" title="把当前排版存成 .json 存档文件，可拷走/下次打开">💾 保存</button>
+    <button class="btn btn-save" id="btnOpenArchive" title="打开之前保存的 .json 存档继续排版">📂 打开</button>
     <input type="file" id="archiveInput" accept=".json,application/json" hidden />
-    <button class="btn" id="btnQa" title="排版质检 + 模块识别结果核对（文档 04 / 08 章）">🔎 质检</button>
-    <button class="btn" id="btnPreview">🔍 预览</button>
-    <button class="btn" id="btnShare" title="生成分享链接或自包含 HTML 文件，发给他人审阅效果">🔗 分享</button>
-    <button class="btn btn-primary" id="btnExport" title="导出真矢量 PDF（调起系统打印对话框，点「另存为 PDF」；文字可选中、任意放大不失真）">📄 导出 PDF（矢量）</button>
-    <button class="btn btn-ghost" id="btnReset">清空</button>
+    <button class="btn btn-check" id="btnQa" title="排版质检 + 模块识别结果核对">🔎 质检</button>
+    <button class="btn btn-preview" id="btnPreview">🔍 预览</button>
+    <button class="btn btn-export" id="btnExport" title="导出真矢量 PDF（调起系统打印对话框，点「另存为 PDF」；文字可选中、任意放大不失真）">📄 导出 PDF（矢量）</button>
+    <button class="btn btn-danger" id="btnReset">清空</button>
   </div>
 </header>
 <div class="status-bar" id="statusBar"><span id="statusText">就绪 · 上传 docx / zip 或点「📂 打开」存档开始</span><span class="qa-badge" id="qaBadge">质检：待检查</span><span class="st-time" id="statusTime"></span></div>
@@ -31,8 +30,15 @@
   <!-- 左侧：文档顺序 + 目录 -->
   <aside class="sidebar">
     <section class="panel collapsible">
-      <h3 class="fold-head" data-fold="docArea">① 文档顺序 <small>（拖拽调整）</small> <span class="fold-ind">▾</span></h3>
+      <h3 class="fold-head" data-fold="docArea">① 文档顺序 + 目录 <small>（拖拽调整）</small> <span class="fold-ind">▾</span></h3>
       <div class="fold-area" id="docArea">
+      <!-- v3.7：按栏目等级筛选文章（一/二/三级），快速定位归类 -->
+      <div class="doc-filter" id="docFilter">
+        <div class="filter-row"><label>一级</label><select id="filterCat1"><option value="">全部一级栏目</option></select></div>
+        <div class="filter-row"><label>二级</label><select id="filterCat2"><option value="">全部二级分类</option></select></div>
+        <div class="filter-row"><label>三级</label><select id="filterCat3"><option value="">全部三级标题</option></select></div>
+        <div class="filter-count" id="filterCount">显示全部文档</div>
+      </div>
       <ul id="docList" class="doc-list"></ul>
       <div class="doc-list-tools">
         <button class="btn-sm" id="btnAddDoc" title="新建一个空白文档，可在右侧页面里直接输入内容">＋ 增加文档</button>
@@ -41,7 +47,13 @@
         <button class="btn-sm" id="btnReTemplate" title="按刊物模板重新识别标题 / 编者按 / 绿色小标题 / 图注 / 双栏">✦ 重新套版</button>
       </div>
       <input type="file" id="appendInput" accept=".zip,.docx" multiple hidden />
-      <p class="hint">上传后自动套用刊物模板并默认双栏；可拖拽调序、点 ✕ 删除、＋ 增加空白文档。若样式识别不准，改完点「重新套版」。</p>
+      <p class="hint">按导入时间顺序排列；可拖拽调序、点 ✕ 删除、＋ 增加空白文档。若样式识别不准，改完点「重新套版」。</p>
+      <!-- v3.7：目录功能合并到本面板顶部，删掉逐条编辑的目录条目框 -->
+      <div class="toc-tools" id="tocTools">
+        <button class="btn-sm" id="btnRegenToc">重新提取目录</button>
+        <button class="btn-sm" id="btnAddToc">＋ 添加目录条目</button>
+        <label class="chk"><input type="checkbox" id="tocEnabled" checked /> 生成目录页</label>
+      </div>
       </div>
     </section>
     <section class="panel">
@@ -82,53 +94,6 @@
       <button class="btn-sm" id="btnQrClear" hidden>移除二维码</button>
       <p class="hint">一级 / 二级 / 三级均为单选，可「＋」新增、「✕」删除；含 AASLD / EASL / APASL 的稿件自动归入「会议撷萃」。竖排标签每页都有、按栏目配不同底色，并按「单页左 / 双页右」左右镜像。</p>
     </section>
-    <section class="panel collapsible">
-      <h3 class="fold-head" data-fold="tocArea">③ 目录 <small>（正文排完后自动带页码，可微调）</small> <span class="fold-ind">▾</span></h3>
-      <div class="fold-area" id="tocArea">
-      <div class="toc-tools">
-        <button class="btn-sm" id="btnRegenToc">重新提取</button>
-        <button class="btn-sm" id="btnAddToc">＋ 添加条目</button>
-        <label class="chk"><input type="checkbox" id="tocEnabled" checked /> 生成目录页</label>
-      </div>
-      <p class="hint">目录按栏目分组、带点线页码；预览中点击可跳转。修改正文后点「重新提取」或改动会自动刷新页码。</p>
-      <ul id="tocList" class="toc-list"></ul>
-      </div>
-    </section>
-    <section class="panel">
-      <h3>④ 页面设置</h3>
-      <div class="field-grid">
-        <label>宽度(mm)<input type="number" id="pgW" value="216" step="0.1" /></label>
-        <label>高度(mm)<input type="number" id="pgH" value="303" step="0.1" /></label>
-        <label>上边距<input type="number" id="mgT" value="15" step="0.1" /></label>
-        <label>下边距<input type="number" id="mgB" value="35" step="0.1" /></label>
-        <label>左边距<input type="number" id="mgL" value="22.9" step="0.1" /></label>
-        <label>右边距<input type="number" id="mgR" value="23.5" step="0.1" /></label>
-        <label>分栏
-          <select id="cols">
-            <option value="1">单栏</option>
-            <option value="2">双栏</option>
-          </select>
-        </label>
-        <label>行距
-          <select id="lineH">
-            <option value="1">单倍</option>
-            <option value="1.5">1.5倍</option>
-            <option value="1.77" selected>1.77倍（成品 6.63mm）</option>
-            <option value="1.64">1.64倍</option>
-            <option value="1.75">1.75倍</option>
-            <option value="1.85">1.85倍</option>
-            <option value="2">双倍</option>
-          </select>
-        </label>
-      </div>
-      <label class="field-full">页眉文字
-        <input type="text" id="hdrText" placeholder="如：雨露肝霖 · 2026年第3期" />
-      </label>
-      <label class="field-full">页脚文字
-        <input type="text" id="ftrText" placeholder="如：内部交流 · 请勿外传" />
-      </label>
-      <label class="chk"><input type="checkbox" id="showPgNum" checked /> 显示页码</label>
-    </section>
   </aside>
 
   <!-- 中间：工具栏 + 预览 -->
@@ -146,13 +111,13 @@
           <option value="h2">二级标题</option>
           <option value="h3">三级标题</option>
           <option value="caption">图注</option>
-          <option value="references">参考文献（悬挂缩进）</option>
+          <option value="references">参考文献（居左无缩进）</option>
         </select>
       </div>
       <div class="tb-group">
         <span class="tb-label">字体</span>
         <select id="fontFamily" title="字体（作用于当前段落或选中文字）">
-          <option value="" selected>跟随模板（思源宋体 / Times New Roman）</option>
+          <option value="" selected>跟随模板（宋体 / Times New Roman）</option>
           <option value="思源宋体">思源宋体（中文）</option>
           <option value="Times New Roman">Times New Roman（英文）</option>
           <option value="SimSun">宋体</option>
@@ -162,21 +127,23 @@
           <option value="KaiTi">楷体</option>
           <option value="Arial">Arial</option>
         </select>
-        <select id="fontSize" title="字号（pt，作用于当前段落或选中文字；数字是成品真实字号）">
-          <option value="" selected>字号</option>
-          <option value="7.6">7.6（参考文献）</option>
-          <option value="9">9（图注）</option>
-          <option value="10">10</option>
-          <option value="10.6">10.6（成品正文）</option>
-          <option value="12">12</option>
-          <option value="14">14</option>
-          <option value="16">16</option>
-          <option value="18">18</option>
-          <option value="20">20</option>
-          <option value="24">24</option>
-          <option value="28">28</option>
-          <option value="32">32</option>
-        </select>
+        <span class="tb-combo" title="字号（pt）：可直接输入任意数值，也可从下拉选预设；数字是成品真实字号">
+          <input id="fontSize" list="fontSizeList" type="number" min="4" max="72" step="0.5" placeholder="字号pt" />
+          <datalist id="fontSizeList">
+            <option value="7.5">7.5（六号·参考文献）</option>
+            <option value="9">9（小五·图注）</option>
+            <option value="10">10</option>
+            <option value="10.5">10.5（五号·成品正文）</option>
+            <option value="12">12</option>
+            <option value="14">14</option>
+            <option value="16">16</option>
+            <option value="18">18</option>
+            <option value="20">20</option>
+            <option value="24">24</option>
+            <option value="28">28</option>
+            <option value="32">32</option>
+          </datalist>
+        </span>
         <button class="tb-btn" data-cmd="bold" title="加粗"><b>B</b></button>
         <button class="tb-btn" data-cmd="italic" title="斜体"><i>I</i></button>
         <button class="tb-btn" data-cmd="underline" title="下划线"><u>U</u></button>
@@ -189,10 +156,6 @@
           <option value="right">右对齐</option>
           <option value="justify">两端对齐</option>
         </select>
-        <button class="tb-btn" data-cmd="justifyLeft" title="左对齐">⬅</button>
-        <button class="tb-btn" data-cmd="justifyCenter" title="居中">⬌</button>
-        <button class="tb-btn" data-cmd="justifyRight" title="右对齐">➡</button>
-        <button class="tb-btn" data-cmd="justifyFull" title="两端对齐">⬌⬌</button>
       </div>
       <div class="tb-group">
         <button class="tb-btn" data-cmd="superscript" title="上标">x²</button>
@@ -200,6 +163,8 @@
       </div>
       <div class="tb-group">
         <button class="tb-btn" id="btnFormatPainter" title="格式刷">🖌 格式刷</button>
+        <button class="tb-btn" id="btnOList" title="有序分点编号：为选中的多个段落加 1. 2. 3. 序号">1. 有序</button>
+        <button class="tb-btn" id="btnUList" title="无序分点编号：为选中的多个段落加 • 项目符号">• 无序</button>
         <button class="tb-btn" id="btnFullWidth" title="通栏：该段横跨整页宽度（不分栏）">▤ 通栏</button>
         <button class="tb-btn" id="btnPageBreak" title="在所选块前插入分页">⤓ 分页</button>
         <button class="tb-btn" id="btnAddImage" title="插入图片">🖼 图片</button>
@@ -208,15 +173,34 @@
       </div>
       <div class="tb-group">
         <span class="tb-label">行距</span>
-        <select id="selLineH" title="当前段落行距">
-          <option value="1">1.0</option>
-          <option value="1.25">1.25</option>
-          <option value="1.5">1.5</option>
-          <option value="1.77" selected>1.77（成品 6.63mm）</option>
-          <option value="1.64">1.64</option>
-          <option value="1.75">1.75</option>
-          <option value="2">2.0</option>
+        <span class="tb-combo" title="当前段落行距：可输入任意倍数或从下拉选">
+          <input id="selLineH" list="lineHList" type="number" min="0.8" max="4" step="0.01" value="1.79" />
+          <datalist id="lineHList">
+            <option value="1">1.0</option>
+            <option value="1.25">1.25</option>
+            <option value="1.5">1.5</option>
+            <option value="1.64">1.64</option>
+            <option value="1.75">1.75</option>
+            <option value="1.79">1.79（成品 6.63mm）</option>
+            <option value="2">2.0</option>
+          </datalist>
+        </span>
+        <span class="tb-label" style="margin-left:4px">缩进</span>
+        <select id="selIndent" title="段落缩进方式">
+          <option value="">默认（跟随样式）</option>
+          <option value="indent2">首行缩进 2 字</option>
+          <option value="none">无缩进（顶格）</option>
+          <option value="hang2">悬挂缩进 2 字</option>
         </select>
+        <span class="tb-label" style="margin-left:4px">段前</span>
+        <span class="tb-combo" title="段前间距（pt）">
+          <input id="selSpaceBefore" list="spaceList" type="number" min="0" max="120" step="1" value="0" style="width:52px" />
+        </span>
+        <span class="tb-label">段后</span>
+        <span class="tb-combo" title="段后间距（pt）">
+          <input id="selSpaceAfter" list="spaceList" type="number" min="0" max="120" step="1" value="0" style="width:52px" />
+          <datalist id="spaceList"><option value="0">0</option><option value="6">6</option><option value="12">12</option><option value="18">18</option><option value="24">24</option></datalist>
+        </span>
       </div>
       <div class="tb-group">
         <span class="tb-label">预览</span>
@@ -226,8 +210,8 @@
           <option value="1">100%</option>
           <option value="1.25">125%</option>
         </select>
-        <label class="chk" style="margin-left:6px" title="显示安全边距、分栏中线、通栏区边界">
-          <input type="checkbox" id="guideToggle" /> 辅助线
+        <label class="chk" style="margin-left:6px" title="显示安全边距、分栏中线、通栏区边界与 3mm 打印出血线">
+          <input type="checkbox" id="guideToggle" /> 辅助线（含出血线）
         </label>
       </div>
     </div>
@@ -248,6 +232,69 @@
       <span class="nav-doc" id="navDoc">—</span>
     </div>
   </main>
+
+  <!-- 右侧：封面封底 + 页面设置（v3.8 按用户要求独立成栏） -->
+  <aside class="sidebar rightbar">
+    <section class="panel">
+      <h3>封面 / 封底 <small>（独立整页，随 PDF 导出）</small></h3>
+      <div class="cover-row">
+        <label class="btn-sm" for="coverInput">▣ 上传封面</label>
+        <input type="file" id="coverInput" accept="image/*,application/pdf" hidden />
+        <button class="btn-sm" id="coverClear" hidden>移除</button>
+      </div>
+      <div class="cover-row">
+        <label class="btn-sm" for="backInput">▣ 上传封底</label>
+        <input type="file" id="backInput" accept="image/*,application/pdf" hidden />
+        <button class="btn-sm" id="backClear" hidden>移除</button>
+      </div>
+      <p class="hint">支持图片或 PDF（矢量）。上传后作独立整页插在正文最前 / 最后；预览即时显示。导出时：图片随打印进 PDF；PDF 请用下方「合并封面封底」生成真矢量成品。</p>
+      <button class="btn btn-export" id="btnMergeCover" title="把你导出的正文 PDF 与封面/封底 PDF 合并成真矢量成品" style="width:100%;margin-top:6px">⊞ 合并封面封底（PDF）</button>
+    </section>
+    <section class="panel">
+      <h3>页面设置</h3>
+      <div class="field-grid" style="margin-bottom:8px">
+        <label class="field-full">外观皮肤
+          <select id="skinSelect" title="只改变编辑器外观，不影响排版与导出 PDF 成品">
+            <option value="light" selected>浅色 · v3.5 青绿编辑台</option>
+            <option value="dark">深色 · v3.6 质感编辑台</option>
+          </select>
+        </label>
+      </div>
+      <div class="field-grid">
+        <label>宽度(mm)<input type="number" id="pgW" value="216" step="0.1" /></label>
+        <label>高度(mm)<input type="number" id="pgH" value="303" step="0.1" /></label>
+        <label>上边距<input type="number" id="mgT" value="20" step="0.1" /></label>
+        <label>下边距<input type="number" id="mgB" value="25" step="0.1" /></label>
+        <label>左边距<input type="number" id="mgL" value="20" step="0.1" /></label>
+        <label>右边距<input type="number" id="mgR" value="20" step="0.1" /></label>
+        <label>分栏
+          <select id="cols">
+            <option value="1">单栏</option>
+            <option value="2">双栏</option>
+          </select>
+        </label>
+        <label>行距
+          <select id="lineH">
+            <option value="1">单倍</option>
+            <option value="1.5">1.5倍</option>
+            <option value="1.77">1.77倍（旧版）</option>
+            <option value="1.79" selected>1.79倍（成品 6.63mm）</option>
+            <option value="1.64">1.64倍</option>
+            <option value="1.75">1.75倍</option>
+            <option value="1.85">1.85倍</option>
+            <option value="2">双倍</option>
+          </select>
+        </label>
+      </div>
+      <label class="field-full">页眉文字
+        <input type="text" id="hdrText" placeholder="如：雨露肝霖 · 2026年第3期" />
+      </label>
+      <label class="field-full">页脚文字
+        <input type="text" id="ftrText" placeholder="如：内部交流 · 请勿外传" />
+      </label>
+      <label class="chk"><input type="checkbox" id="showPgNum" checked /> 显示页码</label>
+    </section>
+  </aside>
 </div>
 
 <!-- PDF 效果预览弹窗（所见即最终导出的 PDF 页面） -->
@@ -258,6 +305,7 @@
     <button id="pmZoomOut">－ 缩小</button>
     <button id="pmZoomIn">＋ 放大</button>
     <button id="pmZoomFit">适应宽度</button>
+    <button id="pmShare" title="导出一个可在浏览器直接打开的 PDF 印刷效果预览网页（HTML）">📄 导出预览网页</button>
     <button class="pm-close" id="pmClose">关闭</button>
   </div>
   <div class="modal-scroll" id="pmScroll">
@@ -280,27 +328,45 @@
   <div class="qa-body" id="qaBody"></div>
 </div>
 
-<!-- 分享弹窗（v3.5）：线上长链接 + 自包含 HTML 文件 -->
+<!-- 分享弹窗（v3.7）：导出 PDF 印刷效果预览网页（自包含 HTML） -->
 <div id="shareModal" class="modal" hidden>
   <div class="modal-bar">
-    <span class="pm-title">🔗 分享排版效果</span>
-    <span class="pm-info" id="shareInfo">生成给他人审阅的链接或文件</span>
+    <span class="pm-title">分享 · PDF 效果预览网页</span>
+    <span class="pm-info" id="shareInfo">一键发布公开链接，或导出 HTML 文件长期存档</span>
     <button class="pm-close" id="shareClose">关闭</button>
   </div>
   <div class="share-body">
     <div class="share-block">
-      <h4>① 线上分享链接</h4>
-      <p class="hint">把当前整刊排版压进链接，发给对方打开线上工具即可还原审阅（依赖网络；稿件含图片较多时链接会较长）。</p>
+      <h4>① 一键发布公开链接</h4>
+      <p class="hint">点一下即得 https 链接，可直接发给他人在浏览器打开，原样保留纸张尺寸、字体与图片，不含编辑器界面。免费匿名托管，链接到期自动删除（适合临时分享）；需永久链接请改用下方「导出 HTML 文件」放到自己的网站。</p>
       <div class="share-row">
-        <input type="text" id="shareUrl" readonly placeholder="点「生成链接」后在此复制" />
-        <button class="btn" id="btnGenLink">生成链接</button>
-        <button class="btn" id="btnCopyLink">复制链接</button>
+        <label class="chk" style="white-space:nowrap">有效期
+          <select id="publishTtl" title="链接保留时长，到期自动删除">
+            <option value="1h">1 小时</option>
+            <option value="12h">12 小时</option>
+            <option value="24h" selected>24 小时</option>
+            <option value="72h">3 天</option>
+          </select>
+        </label>
+        <button class="btn btn-upload" id="btnPublish">🚀 一键发布公开链接</button>
+        <span class="share-progress" id="shareProgress"></span>
+      </div>
+      <div class="publish-result" id="publishResult" hidden>
+        <label class="field-full">公开链接（可直接复制发给他人）
+          <input type="text" id="publishUrl" readonly />
+        </label>
+        <div class="share-row" style="margin-top:6px">
+          <button class="btn-sm" id="publishCopy">📋 复制链接</button>
+          <button class="btn-sm" id="publishOpen">🌐 在新窗口打开</button>
+        </div>
       </div>
     </div>
     <div class="share-block">
-      <h4>② 自包含 HTML 文件（离线可看）</h4>
-      <p class="hint">把排版与全部图片打包成单个 HTML 文件，对方双击即可在本地打开审阅，不依赖网络。</p>
-      <button class="btn btn-primary" id="btnGenHtml">📥 下载自包含 HTML</button>
+      <h4>② 导出 HTML 文件（长期存档）</h4>
+      <p class="hint">导出一个自包含网页文件（.html），双击即可在本地浏览器打开，或放到任意静态网站（如 GitHub Pages）得到永久网址。含全部页面图片，所见即 PDF 成品。</p>
+      <div class="share-row">
+        <button class="btn btn-save" id="btnGenHtml">📄 导出 PDF 效果预览网页（HTML）</button>
+      </div>
     </div>
   </div>
 </div>
@@ -309,6 +375,8 @@
 
 <script src="vendor/jszip.min.js"></script>
 <script src="vendor/html-to-image.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf-lib.min.js"></script>
 <script src="js/sample-assets.js"></script>
 <script src="js/util.js"></script>
 <script src="js/parser.js"></script>
