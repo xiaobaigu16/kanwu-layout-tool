@@ -501,6 +501,17 @@ const Parser = (() => {
     return SECTION_WORDS.includes(bare) || SECTION_WORDS.includes(t.replace(/\s*[:：]$/, '').trim());
   }
 
+  // v3.8 P6：年份开头的中文短标题（如「2022-全国乙肝患者人数监测」「2021乙型肝炎
+  // 相关死亡人数趋势」）属于数据图表小标题，应识别为绿色小标题（label-head），
+  // 而不是参考文献或普通正文。条件：年份开头、总长不太长、无文献著录特征。
+  function isYearDataHead(txt) {
+    const t = (txt || '').trim();
+    if (!/^\s*(?:19|20)\d{2}\s*[-—－~～年]/.test(t)) return false;
+    if (t.length > 40 || /[。；;]$/.test(t)) return false;
+    if (/et\s*al|doi\s*[:：]|https?:\/\/|PMID|[\[［][JM][\]］]|杂志|学报|期刊|出版社/i.test(t)) return false;
+    return true;
+  }
+
   // v3.4：参考文献条目识别（文档 04/05 章）。数字编号开头 + 文献特征（年份 / et al / doi /
   // 期刊名 / 网址 / 中文著录词）。与「绿色编号重点句」区分：重点句不含这些文献特征。
   // 放宽：允许 [1] / (1) / 「1 Wang X…」无分隔符等真实稿件常见写法（v3.3 漏判的主因）。
@@ -511,6 +522,13 @@ const Parser = (() => {
   function isReference(txt) {
     const t = (txt || '').trim();
     if (!t) return false;
+    // v3.8 P6：以「2022-」「2021年」「2020—」等年份开头的中文短标题（数据图表题 /
+    // 小标题），虽会被下面的编号正则误当作「202+2」命中，但它们没有任何文献著录特征，
+    // 是正文小标题而非参考文献（数据阅独稿件高频踩坑：标题被抽到页底文献带）。
+    // 只有当它同时带有 et al / doi / 期刊名等强著录特征时才仍判为文献。
+    const yearTitle = /^\s*(?:19|20)\d{2}\s*[-—－~～年]/.test(t) && t.length <= 40;
+    const strongRef = /et\s*al|doi\s*[:：]|https?:\/\/|PMID|[\[［][JM][\]］]|杂志|学报|期刊|出版社|Hepatology|Journal|Lancet|Gastro|Gut\b|JAMA|NEJM|Clinical|Medicine/i.test(t);
+    if (yearTitle && !strongRef) return false;
     const numbered = /^\s*[\[［(（]?\d{1,3}[\]］)）]?\s*[.、．]?\s*\S/.test(t);
     if (!numbered) return false;
     return /et\s*al|doi\s*[:：]|https?:\/\/|PMID|\b(19|20)\d{2}\b|[\[［][JM][\]］]/i.test(t) ||
@@ -671,6 +689,8 @@ const Parser = (() => {
           type = 'caption'; conf = 'ok';                                // 图注 / 表题 / 标注
         } else if (isSectionHead(txt)) {
           type = 'label-head'; conf = 'ok';                             // 语义小标题
+        } else if (isYearDataHead(txt)) {
+          type = 'label-head'; conf = 'ok';                             // v3.8：年份数据图表小标题
         } else if (isReference(txt)) {
           type = 'references'; conf = 'ok';                             // 参考文献条目
         } else if (/^\d+\s*[.、．]/.test(txt) && txt.length > 8 && txt.length < 90) {
@@ -706,6 +726,6 @@ const Parser = (() => {
 
   return { handleFiles, parseDocxFile, extractDocsFromZip, parseDocument,
            resolveMediaPath, imgMime, walkZip, applyTemplate, guessColumnName,
-           extractQrcode, imageSize, isCaption, isSectionHead, isReference,
+           extractQrcode, imageSize, isCaption, isSectionHead, isYearDataHead, isReference,
            markReferenceZone, plainText, SECTION_WORDS, classifyDoc, L1_LIST, CONF_L2, L3_LIST };
 })();
