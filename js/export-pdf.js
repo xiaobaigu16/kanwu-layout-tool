@@ -289,3 +289,5 @@ const ExportPdf = (() => {
 
   return { run, preview, buildPdf, renderPages, closePreview, setDpi, getDpi, printVector, computePrintGeom };
 })();
+// 顶层 const 不自动成为 window 属性；显式挂载供 Share 只读预览等跨模块调用
+window.ExportPdf = ExportPdf;
