@@ -61,8 +61,11 @@ const Paginate = (() => {
     const sumTo = n => all.slice(0, n).reduce((s, g) => s + g.h, 0);
     const total = sumTo(all.length);
     if (!all.length) return [[], []];
+    // 阅读顺序从左到右：某页只剩 1 个内容组时，必须放左栏，不得孤零零靠右栏。
+    // 修复前 best 初值 0 + 「不允许空栏」的 break 会让单组 cut=0 → 整组落右栏、左栏全空。
+    if (all.length === 1) return [[all[0]], []];
     const target = total / 2;
-    let best = 0, bestDiff = Infinity, acc = 0;
+    let best = 1, bestDiff = Infinity, acc = 0;
     for (let k = 0; k < all.length; k++) {
       acc += all[k].h;
       if (k >= all.length - 1) break;           // 不允许产生空栏

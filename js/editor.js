@@ -160,10 +160,25 @@ const Editor = (() => {
     U.toast('请先点击要设置的文字或段落');
   }
 
+  // v3.9：绿色 dominance 判定——刊物三色（#008000 / #187838 / #58A830）都应加粗。
+  function isGreenColor(hex) {
+    const m = String(hex).trim().match(/^#?([0-9a-f]{6}|[0-9a-f]{3})$/i);
+    if (!m) return false;
+    let h = m[1];
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const r = parseInt(h.slice(0, 2), 16), g = parseInt(h.slice(2, 4), 16), b = parseInt(h.slice(4, 6), 16);
+    return g > 90 && g > r * 1.15 && g > b * 1.15;
+  }
   function applyColor(hex) {
     if (!hex) return;
-    if (wrapSelection('color:' + hex)) return;
-    if (setWholeBlock('color', hex)) return;
+    const el = currentEl();
+    const green = isGreenColor(hex) && el && el.getAttribute('data-type') !== 'references';
+    const css = 'color:' + hex + (green ? ';font-weight:700' : '');
+    if (wrapSelection(css)) return;
+    if (setWholeBlock('color', hex)) {
+      if (el) { el.style.fontWeight = green ? '700' : ''; markDirty(); }
+      return;
+    }
     U.toast('请先点击要设置的文字或段落');
   }
 
@@ -245,6 +260,22 @@ const Editor = (() => {
         else n = 0;
       });
     }
+    // 修复「点了没反应」：markDirty()→syncBlock() 会用 DOM 的 dataset.list 旧值覆盖内存，
+    // 必须先把新值同步到 DOM，再 markDirty。序号同样按重算结果写回。
+    if (b.listType) {
+      el.dataset.list = b.listType;
+      if (b.listN) el.dataset.listN = String(b.listN); else el.removeAttribute('data-list-n');
+    } else {
+      el.removeAttribute('data-list');
+      el.removeAttribute('data-list-n');
+    }
+    // 同文档其它 ol 块的序号也变了，同步它们的 DOM（避免下次 syncBlock 回写旧序号）
+    const owner = App.state.docs.find(d => d.blocks.indexOf(b) >= 0);
+    if (owner) owner.blocks.forEach(bb => {
+      if (bb === b || bb.listType !== 'ol') return;
+      const be = document.querySelector('.blk[data-block-id="' + CSS.escape(bb.id) + '"]');
+      if (be) be.dataset.listN = String(bb.listN || 1);
+    });
     markDirty();
     renderSoon();
     U.toast(same ? '已取消编号' : (kind === 'ol' ? '已设为有序分点' : '已设为无序分点'));

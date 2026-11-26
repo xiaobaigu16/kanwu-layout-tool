@@ -12,15 +12,19 @@ const Parser = (() => {
     return Array.from(nl);
   }
 
-  async function handleFiles(fileList) {
+  // v3.9：hints 为 文件相对路径 → {cat1,cat2} 的映射（来自 webkitdirectory 上传）
+  async function handleFiles(fileList, hints) {
     const docs = [];
     for (const file of fileList) {
       const name = file.name || '';
+      const pathKey = file.webkitRelativePath || name;
+      const hint = hints ? (hints[pathKey] || hints[name]) : null;
       if (/\.zip$/i.test(name)) {
         const inner = await extractDocsFromZip(file);
+        if (hint) inner.forEach(d => { d._folderHint = hint; });
         docs.push(...inner);
       } else if (/\.docx$/i.test(name)) {
-        const d = await parseDocxFile(file, name);
+        const d = await parseDocxFile(file, name, hint);
         if (d) docs.push(d);
       } else {
         U.toast('已忽略非 zip/docx 文件：' + name);
@@ -156,12 +160,15 @@ const Parser = (() => {
     return doc;
   }
 
-  async function parseDocxFile(blob, name) {
+  async function parseDocxFile(blob, name, hint) {
     try {
       const zip = await JSZip.loadAsync(blob);
       const docFile = zip.file('word/document.xml');
       if (!docFile) throw new Error('缺少 word/document.xml');
       const docXml = await docFile.async('string');
+      // v3.9.2：读取编号定义，供「按 Word 原编号」还原有序/无序列表与中文序号标题
+      const numXml = await (zip.file('word/numbering.xml')?.async('string') || '');
+      const numbering = parseNumbering(numXml);
       const relsXml = await (zip.file('word/_rels/document.xml.rels')?.async('string') || '');
       const rels = parseRels(relsXml);
       // 只把正文真正引用的图片转成 base64：很多 docx 的页眉/未引用素材体积很大，
@@ -181,8 +188,9 @@ const Parser = (() => {
           media[rid] = await shrinkDataUrl(raw);
         }
       }
-      const blocks = parseDocument(docXml, media);
+      const blocks = parseDocument(docXml, media, numbering);
       const doc = { id: U.uid('doc'), name, blocks };
+      if (hint) doc._folderHint = hint;
       return await extractQrcode(doc);
     } catch (e) {
       U.toast('解析失败：' + name);
@@ -241,7 +249,41 @@ const Parser = (() => {
     return pre + h + post;
   }
 
-  function parseDocument(xml, media) {
+  // v3.9.2：word/numbering.xml → numId 映射到编号格式（ Solve「按 Word 原编号」）
+  // 返回 { [numId]: { fmt:'bullet'|'decimal'|'chineseCounting'|..., lvlText:'%1.', start:1 } }
+  function parseNumbering(xml) {
+    const map = {};
+    if (!xml) return map;
+    const doc = new DOMParser().parseFromString(xml, 'application/xml');
+    const abs = {};
+    all(doc, 'abstractNum').forEach(a => {
+      const aid = a.getAttribute('w:abstractNumId');
+      if (aid == null) return;
+      const levels = {};
+      all(a, 'lvl').forEach(l => {
+        const ilvl = l.getAttribute('w:ilvl') || '0';
+        const fmtN = all(l, 'numFmt')[0];
+        const txt = all(l, 'lvlText')[0];
+        const st = all(l, 'start')[0];
+        levels[ilvl] = {
+          fmt: fmtN ? (fmtN.getAttribute('w:val') || '') : '',
+          lvlText: txt ? (txt.getAttribute('w:val') || '') : '',
+          start: st ? parseInt(st.getAttribute('w:val'), 10) || 1 : 1
+        };
+      });
+      abs[aid] = levels;
+    });
+    all(doc, 'num').forEach(n => {
+      const nid = n.getAttribute('w:numId');
+      const ar = all(n, 'abstractNumId')[0];
+      if (nid == null || !ar) return;
+      const aid = ar.getAttribute('w:val');
+      map[nid] = abs[aid] || {};
+    });
+    return map;
+  }
+
+  function parseDocument(xml, media, numbering) {
     const doc = new DOMParser().parseFromString(xml, 'application/xml');
     const body = all(doc, 'body')[0];
     if (!body) return [];
@@ -249,7 +291,7 @@ const Parser = (() => {
     for (const node of body.childNodes) {
       const tag = node.nodeName.split(':').pop();
       if (tag === 'p') {
-        parseParagraph(node, media, blocks);
+        parseParagraph(node, media, blocks, numbering);
       } else if (tag === 'tbl') {
         parseTable(node, blocks);
       }
@@ -284,7 +326,7 @@ const Parser = (() => {
     }
   }
 
-  function parseParagraph(p, media, blocks) {
+  function parseParagraph(p, media, blocks, numbering) {
     const ppr = all(p, 'pPr')[0];
     let style = 'body';
     if (ppr) {
@@ -296,6 +338,34 @@ const Parser = (() => {
       const jc = all(ppr, 'jc')[0];
       if (jc) { const a = jcToAlign(jc.getAttribute('w:val')); if (a) align = a; }
     }
+    // v3.9.2：整段加粗 / 编号段落 / Word 段落样式，供套版阶段识别标题与列表
+    let wordBold = false;
+    {
+      // 段级 rPr（段落标记）或任一 run 的 w:b；排除 w:val="0/false/off"
+      const isB = el => {
+        if (!el) return false;
+        return all(el, 'b').some(b => !/^(?:0|false|off)$/i.test(b.getAttribute('w:val') || ''));
+      };
+      if (ppr && isB(all(ppr, 'rPr')[0])) wordBold = true;
+      if (!wordBold && all(p, 'r').some(r => {
+        const t = all(r, 't').map(x => x.textContent || '').join('').trim();
+        return t && isB(all(r, 'rPr')[0]);
+      })) wordBold = true;
+    }
+    let numPr = null;
+    if (ppr) {
+      const np = all(ppr, 'numPr')[0];
+      if (np) {
+        const nid = all(np, 'numId')[0];
+        const ilvlEl = all(np, 'ilvl')[0];
+        const id = nid ? nid.getAttribute('w:val') : '';
+        const ilvl = ilvlEl ? (ilvlEl.getAttribute('w:val') || '0') : '0';
+        const def = (numbering && numbering[id] && numbering[id][ilvl]) || null;
+        numPr = { id, ilvl, fmt: def ? def.fmt : '', lvlText: def ? def.lvlText : '', start: def ? def.start : 1 };
+      }
+    }
+    // 表格下方/上方的短图题：记录与图片的相邻关系，套版时据此识别图注
+    const prevIsImage = blocks.length > 0 && blocks[blocks.length - 1].type === 'image';
 
     // 收集段落内 token：文字片段与图片，按出现顺序交错
     const tokens = [];
@@ -324,7 +394,9 @@ const Parser = (() => {
     const flush = () => {
       if (buf.trim() !== '') {
         blocks.push({ id: U.uid('blk'), type: style, html: buf, align,
-                      pageBreakBefore: false, lineHeight: null });
+                      pageBreakBefore: false, lineHeight: null,
+                      _wordBold: wordBold, _numPr: numPr,
+                      _prevImage: prevIsImage });
         buf = '';
       }
     };
@@ -375,6 +447,48 @@ const Parser = (() => {
   }
 
   const LEAD_COLOR = '#008000';   // 白皮书主绿
+
+  // v3.9.2：Word 原稿样式识别辅助
+  const CN_NUM = ['一','二','三','四','五','六','七','八','九','十'];
+  function toRoman(n) {
+    const table = [[1000,'m'],[900,'cm'],[500,'d'],[400,'cd'],[100,'c'],[90,'xc'],
+                   [50,'l'],[40,'xl'],[10,'x'],[9,'ix'],[5,'v'],[4,'iv'],[1,'i']];
+    let out = '', v = n;
+    for (const [val, sym] of table) while (v >= val) { out += sym; v -= val; }
+    return out;
+  }
+  // 中文序号标题：「一、早诊早治：抓住治疗时间窗」「二、阶梯式方案」「三、联合治疗」
+  function isCnNumberedHead(txt) {
+    const t = (txt || '').trim();
+    if (t.length < 4 || t.length > 36) return false;
+    return /^[一二三四五六七八九十]+[、.．]/.test(t) && !/[。；;]$/.test(t);
+  }
+  // 加粗短段标题：Word 原稿整段加粗、非整句。纯加粗短段 ≤20 字；
+  // 带 Word 自动编号的加粗段放宽到 40 字（如「血糖异常呈剂量依赖性增加…死亡风险」）。
+  function isBoldShortHead(b, txt) {
+    if (!b || !b._wordBold) return false;
+    const t = (txt || '').trim();
+    if (t.length < 2) return false;
+    const max = b._numPr && b._numPr.fmt ? 40 : 20;
+    if (t.length > max) return false;
+    if (/[。；;！？!?]$/.test(t)) return false;
+    if (/^(编者按|导语|导读|前言|引言)/.test(t)) return false;
+    return true;
+  }
+  // 图注 / 表题：Word 里紧跟图片上下、字号偏小或整段加粗的短句（用户明确「一般在图片上下」）
+  function isAdjacentCaption(b, txt, prevType, nextType) {
+    const t = (txt || '').trim();
+    if (!t || t.length > 50) return false;
+    const nearImage = prevType === 'image' || nextType === 'image';
+    if (!nearImage) return false;
+    if (isReference(t) || isSectionHead(t)) return false;
+    // v3.9.2：加粗短段是标题（「病例讨论」「指标变化」），不是图注；
+    // 带 Word 编号的是列表项（如「癌症相关死亡：无显著关联」），也不是图注。
+    if (b && b._wordBold && t.length <= 20) return false;
+    if (b && b._numPr && b._numPr.fmt) return false;
+    // 紧跟图片的短句即视为图注/表题（含无「图N/表N」前缀的，如「治疗及随访过程中…指标变化情况」）
+    return true;
+  }
 
   // 把「编者按：」这类段首词包成绿色加粗（只加 span 标签，文字一字不改）
   function wrapLeadKeyword(html) {
@@ -645,10 +759,17 @@ const Parser = (() => {
       const texts = doc.blocks.map(b => (b.type === 'image' ? '' : plainText(b.html)));
       // v3.3：三级栏目分类（含 AASLD/EASL/APASL 自动归入「会议撷萃」）
       const cls = classifyDoc(doc.name, texts);
-      if (reset || !doc.cat1) {
+      // v3.9：文件夹上传时，一级子目录名优先作为栏目（用户明确指定 > 关键词猜测）
+      const fh = doc._folderHint;
+      if (fh && fh.cat1) {
+        doc.cat1 = fh.cat1;
+        doc.columnName = fh.cat1;
+        if (fh.cat2) doc.cat2 = fh.cat2;
+      } else if (reset || !doc.cat1) {
         doc.cat1 = cls.cat1; doc.cat2 = cls.cat2; doc.cat3 = cls.cat3;
         if (reset || !doc.columnName) doc.columnName = cls.columnName;
       }
+      delete doc._folderHint;
       if (!doc.cols) doc.cols = 2;
       if (doc.qr == null) doc.qr = '';
 
@@ -657,6 +778,16 @@ const Parser = (() => {
 
       let firstText = -1;
       texts.forEach((t, i) => { if (t && firstText < 0) firstText = i; });
+
+      // v3.9.2：按 Word 原编号分组统计序号（numId → 递增计数），供列表还原
+      const numCounter = {};
+      doc.blocks.forEach(b => {
+        if (!b._numPr || !b._numPr.id) return;
+        const k = b._numPr.id + '/' + (b._numPr.ilvl || '0');
+        // 尊重 Word 的 w:start（如中文序号从「四」开始），首个序号 = start
+        numCounter[k] = numCounter[k] ? numCounter[k] + 1 : (b._numPr.start || 1);
+        b._wordListN = numCounter[k];
+      });
 
       // ② 逐块显式识别：每条都带 recog 置信度（ok / check / fail），供「识别结果清单」核对。
       //    v3.2 起不再用「长度 ≤14 且无标点」猜小标题，改按语义词表 + 文献特征判定。
@@ -678,6 +809,9 @@ const Parser = (() => {
           if (b.pageBreakBefore == null) b.pageBreakBefore = false;
           return;
         }
+        // 相邻块类型（用于图注「在图片上下」判定）
+        const prevType = i > 0 ? doc.blocks[i - 1].type : '';
+        const nextType = i < doc.blocks.length - 1 ? doc.blocks[i + 1].type : '';
         let type, conf;
         if (i === firstText) {
           type = 'art-title'; conf = 'ok';
@@ -686,7 +820,13 @@ const Parser = (() => {
         } else if (/^[【\[]/.test(txt) && /[】\]]/.test(txt) && txt.length >= 15) {
           type = 'cite-box'; conf = 'ok';                               // 文献来源
         } else if (isCaption(txt)) {
-          type = 'caption'; conf = 'ok';                                // 图注 / 表题 / 标注
+          type = 'caption'; conf = 'ok';                                // 图注 / 表题 / 标注（显式「图N/表N/注：」）
+        } else if (isCnNumberedHead(txt)) {
+          type = 'h1'; conf = 'ok';                                     // v3.9.2：中文序号 → 一级绿色标题
+        } else if (isBoldShortHead(b, txt)) {
+          type = 'h2'; conf = 'ok';                                     // v3.9.2：加粗短段 → 二级绿色标题
+        } else if (isAdjacentCaption(b, txt, prevType, nextType)) {
+          type = 'caption'; conf = 'ok';                                // v3.9.2：图片上下短句 → 图注
         } else if (isSectionHead(txt)) {
           type = 'label-head'; conf = 'ok';                             // 语义小标题
         } else if (isYearDataHead(txt)) {
@@ -703,6 +843,30 @@ const Parser = (() => {
         }
         b.type = type;
         b.recog = conf;
+        // v3.9.2：套用 Word 原编号列表（用户选「按 Word 原编号」）
+        if (b._numPr && b._numPr.fmt && (type === 'body' || type === 'h1' || type === 'h2' || type === 'h3' || type === 'label-head')) {
+          const fmt = b._numPr.fmt.toLowerCase();
+          if (/bullet|symbol|char/.test(fmt)) {
+            b.listType = 'ul';
+          } else if (/decimal|chinese|upper|lower|roman|alpha|ordinal/.test(fmt)) {
+            b.listType = 'ol';
+            b.listN = b._wordListN || 1;
+            b.listFmt = fmt;                                            // 保留原格式供渲染选择序号样式
+            b.listLvlText = b._numPr.lvlText || '';
+            const n = b.listN;
+            if (/chinese/i.test(fmt)) {
+              b.listLabel = (n <= 10 ? CN_NUM[n - 1] : String(n)) + '、';
+            } else if (/upperroman/i.test(fmt)) {
+              b.listLabel = toRoman(n).toUpperCase() + '.';
+            } else if (/lowerroman/i.test(fmt)) {
+              b.listLabel = toRoman(n) + '.';
+            } else if (/upperletter/i.test(fmt)) {
+              b.listLabel = String.fromCharCode(64 + n) + '.';
+            } else if (/lowerletter/i.test(fmt)) {
+              b.listLabel = String.fromCharCode(96 + n) + '.';
+            }
+          }
+        }
         if (type === 'lead') b.html = wrapLeadKeyword(b.html);
         b.align = ALIGN_OF[type] || 'left';
         if (b.pageBreakBefore == null) b.pageBreakBefore = false;
@@ -724,7 +888,45 @@ const Parser = (() => {
     return docs;
   }
 
+  // v3.9.1：读取外部目录文档（txt / md / docx）为逐行纯文本。
+  // 中文 txt 常见 GBK 编码：UTF-8 严格解码失败时回退 gb18030，避免整篇乱码。
+  // docx 的文字在 w:p → w:r → w:t 里，必须递归收集；v3.9 只看直接子节点导致 0 行。
+  async function readTocText(file) {
+    const name = file.name || '';
+    if (/\.docx$/i.test(name)) {
+      const zip = await JSZip.loadAsync(file);
+      const f = zip.file('word/document.xml');
+      if (!f) throw new Error('目录文档缺少 word/document.xml');
+      const xml = await f.async('string');
+      const doc = new DOMParser().parseFromString(xml, 'text/xml');
+      if (!doc || !doc.documentElement || doc.documentElement.localName === 'parsererror') {
+        throw new Error('目录文档 XML 解析失败');
+      }
+      const collect = node => {
+        let s = '';
+        const walk = n => {
+          Array.from(n.childNodes || []).forEach(c => {
+            const ln = c.localName || '';
+            if (ln === 't' || ln === 'delText') s += c.textContent || '';
+            else if (ln === 'tab') s += ' ';
+            else if (ln === 'br' || ln === 'cr') s += ' ';
+            else walk(c);
+          });
+        };
+        walk(node);
+        return s.trim();
+      };
+      return all(doc, 'p').map(collect).filter(Boolean);
+    }
+    const buf = await file.arrayBuffer();
+    let text;
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch (e) { text = new TextDecoder('gb18030').decode(buf); }
+    return text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  }
+
   return { handleFiles, parseDocxFile, extractDocsFromZip, parseDocument,
+           readTocText,
            resolveMediaPath, imgMime, walkZip, applyTemplate, guessColumnName,
            extractQrcode, imageSize, isCaption, isSectionHead, isYearDataHead, isReference,
            markReferenceZone, plainText, SECTION_WORDS, classifyDoc, L1_LIST, CONF_L2, L3_LIST };

@@ -153,6 +153,27 @@ body{
 /* 内容块（可编辑） */
 .blk{outline:none;margin:0 0 calc(6px * var(--zs));word-break:break-word}
 .blk:focus{box-shadow:0 0 0 2px var(--accent) inset;border-radius:3px}
+/* v3.9.1：段落拖动——真实可见的抓握手柄（悬停显示），打印 / 导出时隐藏 */
+.blk{position:relative}
+.preview .blk[data-block-id]:hover{box-shadow:inset 3px 0 0 rgba(24,120,56,.35)}
+.preview .blk.blk-dragging{opacity:.45;box-shadow:inset 3px 0 0 var(--grn)!important}
+.blk-drag-handle{position:absolute;left:-17px;top:2px;width:14px;height:20px;
+  display:flex;align-items:center;justify-content:center;font-size:12px;line-height:1;
+  color:#1c7a5e;background:#fff;border:1px solid #b9c5bf;border-radius:3px;
+  cursor:grab;user-select:none;opacity:0;transition:opacity .12s;z-index:6;
+  box-shadow:0 1px 3px rgba(0,0,0,.12)}
+.preview .blk:hover>.blk-drag-handle,.preview .blk.blk-dragging>.blk-drag-handle{opacity:1}
+.blk-drag-handle:active{cursor:grabbing}
+.blk-drag-ghost{position:fixed;z-index:9999;pointer-events:none;max-width:260px;
+  padding:4px 10px;background:#e2f2e9;border:1px solid #1c7a5e;border-radius:4px;
+  color:#1c7a5e;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.18);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blk-drop-line{position:fixed;z-index:9998;pointer-events:none;display:none;
+  height:2px;background:#1c7a5e;box-shadow:0 0 0 1px rgba(255,255,255,.7)}
+@media print{
+  .preview .blk[data-block-id]:hover,.preview .blk.blk-dragging{box-shadow:none!important;opacity:1}
+  .blk-drag-handle,.blk-drag-ghost,.blk-drop-line{display:none!important}
+}
 .blk.h1{font-size:22px;font-weight:700;margin:14px 0 8px;color:var(--brand-d)}
 .blk.h2{font-size:18px;font-weight:700;margin:12px 0 6px}
 .blk.h3{font-size:15px;font-weight:600;margin:10px 0 4px}
@@ -275,6 +296,64 @@ body{
 .blk.h1{font-size:calc(13pt * var(--fs));font-weight:700}
 .blk.h2{font-size:calc(11pt * var(--fs));font-weight:700}
 .blk.h3{font-size:calc(10pt * var(--fs));font-weight:700}
+/* v3.9：按「绿色」本身兜底加粗——手动染成绿色的正文 / 导入后残留的绿色 span
+   过去只有类名规则，工具栏染色不改字重，PDF 里就变成绿色常规字。 */
+.blk:not(.references)[style*="color:#008000" i],
+.blk:not(.references)[style*="color: #008000" i],
+.blk:not(.references)[style*="color:rgb(0, 128, 0)" i],
+.blk:not(.references)[style*="color: rgb(0, 128, 0)" i],
+.blk:not(.references)[style*="color:#187838" i],
+.blk:not(.references)[style*="color:#58A830" i],
+.blk:not(.references) [style*="color:#008000" i],
+.blk:not(.references) [style*="color: #008000" i],
+.blk:not(.references) [style*="color:rgb(0, 128, 0)" i],
+.blk:not(.references) [style*="color: rgb(0, 128, 0)" i],
+.blk:not(.references) [style*="color:#187838" i],
+.blk:not(.references) [style*="color:#58A830" i]{font-weight:700!important}
+/* 图片 / 表格注释一律加粗（含块内手动拆出的 span） */
+.blk.caption,.blk.caption *{font-weight:700!important}
+/* 文献条目维持六号 7.5pt / 400，不许被上面的绿色规则误伤 */
+.blk.references,.blk.references *{font-weight:400!important}
+/* ===== v3.9.2：绿色文字加粗（真粗体回退，无描边）=====
+   宋体没有真正的粗体字面，屏幕靠浏览器合成、部分打印/PDF 环节丢合成粗体。
+   导出时给绿色文字优先用有真粗体字面的字体（雅黑粗→等线粗→思源黑粗），
+   粗度由字形本身提供。v3.9.1 曾叠加 0.5px 文字描边，笔画黏连不美观，
+   用户明确要求只加粗、不描边，故已移除。编辑页仍按原宋体显示。 */
+@font-face{
+  /* 宋体粗体字面优先：保持宋体字形、只是变粗，最贴近刊物正文观感。
+     本机无 simsunb 时依次退到雅黑粗 / 等线粗 / 思源黑粗（黑体字面，略硬）。 */
+  font-family:'PrintBoldCJK';
+  src:local('SimSun Bold'),local('宋体 粗体'),
+      local('Microsoft YaHei Bold'),local('微软雅黑 粗体'),
+      local('DengXian Bold'),local('等线 粗体'),
+      local('Noto Sans SC Bold'),local('思源黑体 粗体');
+  font-weight:700 900;font-style:normal;font-display:swap;
+}
+@media print{
+  .blk.art-title,.blk.lead .lead-kw,.blk.label-head,.blk.highlight,
+  .blk.h1,.blk.h2,.blk.h3,.blk.caption,.blk.caption *,
+  .blk:not(.references) [style*="color:#008000" i],
+  .blk:not(.references) [style*="color: #008000" i],
+  .blk:not(.references) [style*="color:rgb(0, 128, 0)" i],
+  .blk:not(.references) [style*="color:#187838" i],
+  .blk:not(.references) [style*="color:#58A830" i]{
+    font-family:"Times New Roman",'PrintBoldCJK',"SimSun","宋体",serif !important;
+    font-weight:700 !important;
+  }
+}
+/* 位图 PDF / 分享预览网页：渲染前由 JS 给 body 加 export-bold，规则同上 */
+body.export-bold .blk.art-title,body.export-bold .blk.lead .lead-kw,
+body.export-bold .blk.label-head,body.export-bold .blk.highlight,
+body.export-bold .blk.h1,body.export-bold .blk.h2,body.export-bold .blk.h3,
+body.export-bold .blk.caption,body.export-bold .blk.caption *,
+body.export-bold .blk:not(.references) [style*="color:#008000" i],
+body.export-bold .blk:not(.references) [style*="color: #008000" i],
+body.export-bold .blk:not(.references) [style*="color:rgb(0, 128, 0)" i],
+body.export-bold .blk:not(.references) [style*="color:#187838" i],
+body.export-bold .blk:not(.references) [style*="color:#58A830" i]{
+  font-family:"Times New Roman",'PrintBoldCJK',"SimSun","宋体",serif !important;
+  font-weight:700 !important;
+}
 /* 正文：宋体（英文 TNR）、首行缩进两字、两端对齐、行距 6.63mm（10.5pt × 1.79） */
 .blk.body{font-family:var(--serif);font-size:calc(10.6pt * var(--fs));line-height:1.79;
   text-align:justify;text-justify:inter-ideograph;text-indent:2em;color:#222}
@@ -291,6 +370,8 @@ body{
 .blk[data-list]{padding-left:2em;text-indent:0}
 .blk[data-list="ol"]::before{content:attr(data-list-n) ". ";font-weight:700;color:var(--grn);margin-left:-2em}
 .blk[data-list="ul"]::before{content:"• ";font-weight:700;color:var(--grn);margin-left:-2em}
+/* v3.9.2：Word 原编号──中文序号「四、」/罗马数字 / 字母，用 data-list-label 原样显示 */
+.blk[data-list][data-list-label]::before{content:attr(data-list-label) " ";font-weight:700;color:var(--grn);margin-left:-2em}
 .blk img{border:0;margin:6px auto;max-width:85%;max-height:calc(45mm * var(--zs));width:auto;height:auto}
 /* 通栏的文献截图约 110mm 宽、居中 */
 .page .full-zone .blk.imgblk img{max-width:62%;max-height:calc(52mm * var(--zs))}
@@ -334,7 +415,9 @@ body{
 .toc-line.lvl-h1{font-weight:400}   /* v3.5 V6：目录条目（含一级）不加粗，仅栏目名加粗；序号在 JS 里加 */
 .toc-line.lvl-h2 .toc-txt{padding-left:14px}
 .toc-line.lvl-h3 .toc-txt{padding-left:28px;font-size:calc(9.5pt * var(--fs));color:#555}
-.toc-line.custom .toc-txt{font-style:italic;color:var(--grn-d)}
+/* v3.9.2：导入/手工目录条目与正文标题同款黑色常规，不再整条染绿斜体；
+   绿色只留给栏目分级（toc-group/2/3），避免「一通绿」看不清层级。 */
+.toc-line.custom .toc-txt{font-style:normal;color:inherit}
 .toc-txt{word-break:break-all}
 
 /* 目录手动编辑面板 */
@@ -575,6 +658,16 @@ body.readonly-view .modal{background:rgba(10,14,12,.9)}
   .preview .page:last-child{page-break-after:auto;break-after:auto}
   .blk:focus{box-shadow:none}
   .blk.qa-flash{box-shadow:none !important;animation:none;background:transparent}
+  /* v3.9：矢量 PDF 中强制保留绿色标题 / 绿色字 / 图注的字重。
+     旧版只靠屏幕 CSS 合成粗体，打印引擎换字体字面时会丢粗。 */
+  .blk.art-title,.blk.lead .lead-kw,.blk.label-head,.blk.highlight,
+  .blk.h1,.blk.h2,.blk.h3,.blk.caption,
+  .blk:not(.references)[style*="color:#008000" i],
+  .blk:not(.references)[style*="color: #008000" i],
+  .blk:not(.references) [style*="color:#008000" i],
+  .blk:not(.references) [style*="color: #008000" i],
+  .blk.caption *{font-weight:700!important}
+  .blk.references,.blk.references *{font-weight:400!important}
 }
 
 /* ============================================================================

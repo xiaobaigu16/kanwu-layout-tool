@@ -33,14 +33,13 @@ const App = (() => {
     docs: [],
     tocEnabled: true,
     tocEntries: [],
+    tocImported: false,  // v3.9：外部目录导入模式（整体替换，页码锁定）
     blockMap: {},
     selectedDocId: null,
     showGuides: false,   // 03 章：分栏线 / 安全边距辅助线
     skin: 'light',       // v3.8 P1：外观皮肤 light / dark（只影响编辑器 UI）
-    coverImg: '',        // v3.8 P4：封面整页图片（dataURL）
-    backImg: '',         // v3.8 P4：封底整页图片（dataURL）
-    coverPdf: '',        // v3.8.1：封面 PDF 原始 base64（合并真矢量用）
-    backPdf: '',         // v3.8.1：封底 PDF 原始 base64（合并真矢量用）
+    coverImg: '',        // v3.8 P4：封面整页图片（dataURL，PDF 首页栅格化）
+    backImg: '',         // v3.8 P4：封底整页图片（dataURL，PDF 首页栅格化）
     qaDoneIssues: [],    // v3.4：质检报告里用户勾选「已完成」的问题指纹
     // v3.3：三级栏目分类（可增删），一级决定竖排标签底色与目录分组
     categories: {
@@ -96,30 +95,49 @@ const App = (() => {
   let lastSig = null, lastSnapshot = null, historyRestoring = false;
   let pageNavTotal = 0;
 
+  // v3.9：内容签名按真实 html 计算哈希（旧版只取长度，同长度改字进不了撤销栈）
+  function hash32(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return (h >>> 0).toString(36);
+  }
   function stateSig() {
-    let s = state.docs.length + '|' + state.tocEnabled + '|' +
+    let s = state.docs.length + '|' + state.tocEnabled + '|' + state.tocImported + '|' +
             JSON.stringify(state.page) + '|' + JSON.stringify(state.categories) + '|';
     state.docs.forEach(d => {
       s += [d.id, d.name, d.columnName || '', d.cat1 || '', d.cat2 || '', d.cat3 || '',
             d.cols || '', d.qr ? 1 : 0, d.blocks.length].join(':') + ';';
       d.blocks.forEach(b => {
-        s += [b.id, b.type, (b.html || '').length, b.caption || '', b.full ? 'F' : '',
-              b.fontPt || '', b.align || ''].join(',') + '/';
+        s += [b.id, b.type, hash32(b.html || ''), b.src ? hash32(b.src) : '', b.caption || '',
+              b.full ? 'F' : '', b.fontPt || '', b.align || '', b.color || '',
+              b.fontWeight || ''].join(',') + '/';
       });
     });
     s += '|' + state.tocEntries.map(e =>
       [e.text, e.page, e.level, e.column, e.cat2, e.cat3].join('~')).join(';');
-    return s;
+    return hash32(s);
   }
+  // v3.9：浅拷贝即可——块与目录条目的字段全是原始值，字符串不可变，
+  // 旧版 JSON 深拷贝会把图片 base64 复制 15 份常驻内存，是大稿件崩溃的主因之一。
   function snapshot() {
-    return JSON.parse(JSON.stringify({
-      page: state.page, docs: state.docs, tocEnabled: state.tocEnabled,
-      tocEntries: state.tocEntries, selectedDocId: state.selectedDocId,
-      showGuides: state.showGuides, skin: state.skin,
+    return {
+      page: Object.assign({}, state.page),
+      docs: state.docs.map(d => Object.assign({}, d, {
+        blocks: d.blocks.map(b => Object.assign({}, b))
+      })),
+      tocEnabled: state.tocEnabled,
+      tocImported: state.tocImported,
+      tocEntries: state.tocEntries.map(e => Object.assign({}, e)),
+      selectedDocId: state.selectedDocId,
+      showGuides: state.showGuides,
+      skin: state.skin,
       coverImg: state.coverImg, backImg: state.backImg,
-      coverPdf: state.coverPdf, backPdf: state.backPdf,
-      categories: state.categories, qaDoneIssues: state.qaDoneIssues
-    }));
+      categories: {
+        l1: state.categories.l1.slice(), l2: state.categories.l2.slice(),
+        l3: state.categories.l3.slice()
+      },
+      qaDoneIssues: state.qaDoneIssues.slice()
+    };
   }
   function updateHistoryButtons() {
     const u = $('btnUndo'), r = $('btnRedo');
@@ -131,12 +149,12 @@ const App = (() => {
     state.page = Object.assign({}, PAGE_DEFAULT, snap.page || {});
     state.docs = snap.docs || [];
     state.tocEnabled = snap.tocEnabled !== false;
+    state.tocImported = !!snap.tocImported;
     state.tocEntries = snap.tocEntries || [];
     state.selectedDocId = snap.selectedDocId || null;
     state.showGuides = !!snap.showGuides;
     state.skin = snap.skin === 'dark' ? 'dark' : 'light';
     state.coverImg = snap.coverImg || ''; state.backImg = snap.backImg || '';
-    state.coverPdf = snap.coverPdf || ''; state.backPdf = snap.backPdf || '';
     state.categories = Object.assign({}, DEFAULT_CATEGORIES, snap.categories || {});
     state.qaDoneIssues = Array.isArray(snap.qaDoneIssues) ? snap.qaDoneIssues.slice() : [];
     migrateImageCaptions();
@@ -323,6 +341,105 @@ const App = (() => {
     return cols === 1 ? bw : (bw - COL_GAP_MM * MM_PX * SCALE) / 2;
   }
 
+  // v3.9.1：同一篇文章内段落拖动。同一篇的块会被分页到不同页/栏，
+  // 因此只按 data-block-id 在 d.blocks 里定位，绝不按 DOM 相邻关系。
+  // 交互改为「可见抓握手柄 + 指针拖动 + 插入位置线」，不再依赖 contenteditable 上的原生 drag。
+  let blockDrag = null;
+  function reorderBlock(srcId, dstId, pos) {
+    if (!srcId || !dstId || srcId === dstId) return false;
+    let moved = false;
+    for (const d of state.docs) {
+      const from = d.blocks.findIndex(b => b.id === srcId);
+      if (from < 0) continue;
+      if (!d.blocks.some(b => b.id === dstId)) {
+        U.toast('段落拖动仅限同一篇文章内');
+        return false;
+      }
+      const [m] = d.blocks.splice(from, 1);
+      let idx = d.blocks.findIndex(b => b.id === dstId);
+      if (pos === 'after') idx++;
+      d.blocks.splice(idx, 0, m);
+      moved = true;
+      break;
+    }
+    if (!moved) return false;
+    rebuildBlockMap();
+    buildToc(true);
+    render();
+    U.toast('段落顺序已调整');
+    return true;
+  }
+
+  function makeDragHandle(block) {
+    const h = document.createElement('span');
+    h.className = 'blk-drag-handle';
+    h.setAttribute('contenteditable', 'false');
+    h.setAttribute('data-drag-handle', '1');
+    h.textContent = '⋮⋮';
+    h.title = '按住拖动：同一篇文章内调整段落顺序';
+    h.addEventListener('pointerdown', e => {
+      if (e.button !== 0) return;
+      e.preventDefault(); e.stopPropagation();
+      beginBlockDrag(block.id, e.clientX, e.clientY,
+        (block.html || '').replace(/<[^>]+>/g, '').slice(0, 24));
+    });
+    return h;
+  }
+
+  function beginBlockDrag(id, x, y, label) {
+    endBlockDrag(false);
+    blockDrag = { id, x, y, label, active: false, ghost: null, line: null, target: null, pos: 'before' };
+    document.addEventListener('pointermove', moveBlockDrag);
+    document.addEventListener('pointerup', endBlockDrag);
+    document.addEventListener('pointercancel', cancelBlockDrag);
+  }
+  function cancelBlockDrag() { endBlockDrag(false); }
+  function moveBlockDrag(e) {
+    const s = blockDrag;
+    if (!s) return;
+    if (!s.active) {
+      if (Math.abs(e.clientX - s.x) + Math.abs(e.clientY - s.y) < 5) return;
+      s.active = true;
+      const src = document.querySelector(`.blk[data-block-id="${s.id}"]`);
+      if (src) src.classList.add('blk-dragging');
+      s.ghost = document.createElement('div');
+      s.ghost.className = 'blk-drag-ghost';
+      s.ghost.textContent = s.label || '段落';
+      document.body.appendChild(s.ghost);
+      s.line = document.createElement('div');
+      s.line.className = 'blk-drop-line';
+      document.body.appendChild(s.line);
+    }
+    s.ghost.style.left = (e.clientX + 14) + 'px';
+    s.ghost.style.top = (e.clientY - 10) + 'px';
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    const target = under && under.closest ? under.closest('#preview .blk[data-block-id]') : null;
+    if (target && target.getAttribute('data-block-id') !== s.id) {
+      const r = target.getBoundingClientRect();
+      s.target = target.getAttribute('data-block-id');
+      s.pos = e.clientY < r.top + r.height / 2 ? 'before' : 'after';
+      s.line.style.display = 'block';
+      s.line.style.left = r.left + 'px';
+      s.line.style.width = r.width + 'px';
+      s.line.style.top = (s.pos === 'before' ? r.top : r.bottom) + 'px';
+    } else {
+      s.target = null;
+      s.line.style.display = 'none';
+    }
+  }
+  function endBlockDrag(commit) {
+    document.removeEventListener('pointermove', moveBlockDrag);
+    document.removeEventListener('pointerup', endBlockDrag);
+    document.removeEventListener('pointercancel', cancelBlockDrag);
+    const s = blockDrag;
+    blockDrag = null;
+    if (!s) return;
+    document.querySelectorAll('.blk-dragging').forEach(n => n.classList.remove('blk-dragging'));
+    if (s.ghost && s.ghost.parentNode) s.ghost.parentNode.removeChild(s.ghost);
+    if (s.line && s.line.parentNode) s.line.parentNode.removeChild(s.line);
+    if (commit && s.active && s.target) reorderBlock(s.id, s.target, s.pos);
+  }
+
   function makeBlockEl(block) {
     const el = document.createElement('div');
     el.className = 'blk ' + (block.type === 'image' ? 'imgblk' : block.type);
@@ -346,6 +463,9 @@ const App = (() => {
       if (block.listType) {
         el.dataset.list = block.listType;
         if (block.listN) el.dataset.listN = String(block.listN);
+        // v3.9.2：Word 原编号（中文序号 / 罗马数字 / 字母）按原格式显示前缀
+        if (block.listFmt) el.dataset.listFmt = block.listFmt;
+        if (block.listLabel) el.dataset.listLabel = block.listLabel;
       }
       // 手动设过的字号 / 字体 / 颜色：用 calc(真实pt × --fs) 写入，预览缩放时自动跟随
       if (block.fontPt) {
@@ -354,10 +474,13 @@ const App = (() => {
       }
       if (block.fontFamily) el.style.fontFamily = block.fontFamily;
       if (block.color) el.style.color = block.color;
+      if (block.fontWeight) el.style.fontWeight = block.fontWeight;
     }
     el.addEventListener('focusin', () => Editor.setCurrentBlock(el));
     el.addEventListener('input', () => syncBlock(el));
     el.addEventListener('blur', () => { syncBlock(el); scheduleRender(); });
+    // v3.9.1：真实可见的抓握手柄（悬停显示），指针拖动不碰文字选区
+    el.appendChild(makeDragHandle(block));
     return el;
   }
 
@@ -369,7 +492,8 @@ const App = (() => {
       // v3.4：图注已是独立块，图片块只同步 src
       b.src = el.querySelector('img') ? el.querySelector('img').src : b.src;
     } else {
-      b.html = el.innerHTML;
+      // 抓握手柄是编辑器 UI，不属于正文；回写时剔除，避免被存进稿件或导出
+      b.html = el.innerHTML.replace(/<span\b[^>]*data-drag-handle="1"[^>]*>[\s\S]*?<\/span>/gi, '');
       b.type = el.getAttribute('data-type') || 'body';
       b.align = el.style.textAlign || null;
       b.alignLocked = !!el.style.textAlign;
@@ -380,9 +504,12 @@ const App = (() => {
       b.marginBottom = el.style.marginBottom || null;
       b.listType = el.dataset.list || null;
       b.listN = el.dataset.listN ? parseInt(el.dataset.listN, 10) : 0;
+      b.listFmt = el.dataset.listFmt || null;
+      b.listLabel = el.dataset.listLabel || null;
       b.fontPt = el.dataset.pt ? parseFloat(el.dataset.pt) : null;
       b.fontFamily = el.style.fontFamily || null;
       b.color = el.style.color || null;
+      b.fontWeight = el.style.fontWeight || null;
     }
   }
 
@@ -439,8 +566,8 @@ const App = (() => {
     setGeometryCss();
     renderDocList();
     renderDocProps();
+    renderTocList();   // v3.9：恢复目录条目逐条编辑（删条目 / 改页码 / 调顺序）
     syncCoverUI();
-    // v3.7：目录条目逐条编辑框已删，仅保留自动目录页；不再渲染 tocList
     const srcs = [];
     state.docs.forEach(d => d.blocks.forEach(b => { if (b.type === 'image' && b.src) srcs.push(b.src); }));
     ensureImages(srcs, renderPreview);
@@ -549,7 +676,7 @@ const App = (() => {
         const toIdx = state.docs.findIndex(x => x.id === d.id);
         const [m] = state.docs.splice(fromIdx, 1);
         state.docs.splice(toIdx, 0, m);
-        render();
+        buildToc(true); render();   // v3.9：文档顺序变了，目录必须同步
       });
       ul.appendChild(li);
     });
@@ -588,8 +715,13 @@ const App = (() => {
     else { qrPrev.hidden = true; qrClear.hidden = true; }
   }
 
+  // v3.9：默认折叠，避免每次重绘都重建上百行输入控件拖慢后期排版
+  let tocListOpen = false;
   function renderTocList() {
     const ul = $('tocList');
+    if (!ul) return;
+    ul.hidden = !tocListOpen;
+    if (!tocListOpen) { ul.innerHTML = ''; return; }
     ul.innerHTML = '';
     if (!state.tocEnabled) { ul.innerHTML = '<li class="toc-empty">（已关闭目录）</li>'; return; }
     if (state.tocEntries.length === 0) {
@@ -741,8 +873,18 @@ const App = (() => {
           if (picked.length && g.breakBefore) break;
           picked.push(g); used += g.h; gi++;
         }
-        const parts = splitColumns(picked, colH, cols);
-        const usedArr = parts.map(p => p.reduce((s, g2) => s + g2.h, 0));
+        let parts = splitColumns(picked, colH, cols);
+        let usedArr = parts.map(p => p.reduce((s, g2) => s + g2.h, 0));
+        // 修复「内容超过辅助框」：装箱按「两栏总高」判定，但离散内容组分栏后可能出现
+        // 某一栏仍超高（如 0.6+0.6+0.8 栏高三组，总高恰够两栏却无法均分）。
+        // 这类组不裁切、也不硬塞，回退末尾组到下一页，保证每栏都落在版心底内。
+        let guard = 0;
+        while (picked.length > 1 && usedArr.some(u => u > colH + 1) && guard++ < picked.length) {
+          gi--;
+          picked.pop();
+          parts = splitColumns(picked, colH, cols);
+          usedArr = parts.map(p => p.reduce((s, g2) => s + g2.h, 0));
+        }
         const overflow = usedArr.some(u => u > colH + 1);
         const mx = Math.max.apply(null, usedArr), mn = Math.min.apply(null, usedArr);
         const unbalanced = mx > 0 && (mx - mn) / mx > 0.4;
@@ -1205,11 +1347,11 @@ const App = (() => {
   }
 
   // ---------- 操作 ----------
-  function onUpload(files) {
+  function onUpload(files, hints) {
     U.toast('正在解析文件，请稍候…');
     // 先让浏览器把提示绘制出来再进入重解析，避免界面看似「卡死没反应」
     setTimeout(() => {
-      Parser.handleFiles(files).then(docs => {
+      Parser.handleFiles(files, hints).then(docs => {
         if (!docs || docs.length === 0) { U.toast('未发现可解析的 docx'); return; }
         Parser.applyTemplate(docs);   // 导入即按白皮书模板套版
         state.docs.push(...docs);
@@ -1225,6 +1367,96 @@ const App = (() => {
 
   function sortDocs() {
     state.docs.sort((a, b) => U.compareSort(a.name || '', b.name || ''));
+  }
+
+  // v3.9：选择文件夹上传——一级子目录名直接作为栏目分类，不再靠关键词猜测。
+  // parts 形如「白皮书/期刊导读/APASL/01_xxx.docx」：取 parts[1] 为一级、parts[2] 为二级；
+  // 若用户直接选中放满 docx 的文件夹，则取该文件夹名（parts[0]）为一级。
+  function onFolderSelected(input) {
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+    const hints = {};
+    files.forEach(f => {
+      const rel = f.webkitRelativePath || f.name;
+      const parts = rel.split('/').filter(Boolean);
+      const cat1 = parts.length > 2 ? parts[1] : (parts.length > 1 ? parts[0] : '');
+      const cat2 = parts.length > 3 ? parts[2] : '';
+      if (cat1 && state.categories.l1.indexOf(cat1) < 0) state.categories.l1.push(cat1);
+      if (cat2 && state.categories.l2.indexOf(cat2) < 0) state.categories.l2.push(cat2);
+      hints[rel] = { cat1, cat2 };
+    });
+    onUpload(files, hints);
+    input.value = '';
+  }
+
+  // v3.9：外部目录导入。只认「文字 + 末尾页码」的行，栏目行以中文序号开头。
+  // 导入后整体替换现有目录、页码锁定；点「重新提取目录」回到自动模式。
+  function normTocKey(s) {
+    return (s || '').replace(/<[^>]+>/g, '')
+      .replace(/【[^】]*】/g, '')
+      .replace(/^[^丨｜|]{0,20}[丨｜|]\s*/, '')
+      .replace(/[\s\u3000·•．.。、：:（）()\[\]【】]/g, '').toLowerCase();
+  }
+  async function importTocFile(file) {
+    if (!file) return;
+    const lines = await Parser.readTocText(file);
+    if (!lines.length) throw new Error('目录文档为空');
+    // 预先建立正文标题 → targetId 映射，导入条目尽量保持可点击定位
+    const idByText = {};
+    Toc.buildFromDocs(state.docs).forEach(e => {
+      const k = normTocKey(e.text);
+      if (k && !idByText[k]) idByText[k] = e.targetId;
+      const stripped = (e.text || '').replace(/【[^】]*】/g, '')
+        .replace(/^[^丨｜|]{0,20}[丨｜|]\s*/, '');
+      const k2 = normTocKey(stripped);
+      if (k2 && !idByText[k2]) idByText[k2] = e.targetId;
+    });
+    const entries = [];
+    let column = '', cat2 = '', cat3 = '';
+    lines.forEach(raw => {
+      const line = raw.trim();
+      if (!line || /^(目录|contents|table of contents|toc)$/i.test(line)) return;
+      // 目录文档自己的大标题（如「2025年度《肝霖荟萃》第二季度季刊目录」）不是条目
+      if (line.length < 40 && /目录\s*$/.test(line)) { column = ''; cat2 = ''; cat3 = ''; return; }
+      // 一级栏目行：一、期刊导读 / （一）期刊导读 / 或者直接是已知一级栏目名
+      const cm = line.match(/^(?:[（(])?[一二三四五六七八九十]+[)）]?\s*[、.．]?\s*(.+)$/);
+      const known = state.categories.l1.find(c => line === c || line.replace(/[：:]$/, '') === c);
+      if (known) { column = known; cat2 = ''; cat3 = ''; return; }
+      if (cm && cm[1].length <= 20 && !/\d{1,4}\s*$/.test(line)) { column = cm[1].trim(); cat2 = ''; cat3 = ''; return; }
+      // 二级栏目行：APASL2025 / 第十三届全国疑难及重症肝病大会 等
+      const isL2 = state.categories.l2.some(c => line.includes(c) && line.length <= 32) ||
+        /^.{1,30}年会\s*[（(](?:APASL|EASL|AASLD)\s*\d{4}[)）]?$/i.test(line);
+      if (isL2 && line.length <= 32) { cat2 = line; cat3 = ''; return; }
+      // 三级栏目行：慢乙肝治疗相关 等
+      const isL3 = state.categories.l3.some(c => line === c || line.replace(/[：:]$/, '') === c);
+      if (isL3) { cat3 = line; return; }
+      // 条目行：1. 标题 …… 012 / 1.1 标题 12 / 纯标题+页码
+      const nm = line.match(/^(\d+(?:\.\d+)*)\s*[.、．]?\s*(.*)$/);
+      const num = nm ? nm[1] : '';
+      let text = nm ? nm[2].trim() : line;
+      const pm = text.match(/^(.*?)(?:\s+|\s*[.·…]{2,}\s*)(\d{1,4})\s*$/);
+      let page = '';
+      if (pm && pm[1].trim()) { text = pm[1].trim(); page = pm[2]; }
+      text = text.replace(/^[.·…\s]+|[.·…\s]+$/g, '');
+      if (!text || text.length > 80) return;
+      const depth = num ? num.split('.').length : 1;
+      const level = depth === 1 ? 'h1' : (depth === 2 ? 'h2' : 'h3');
+      const key = normTocKey(text);
+      entries.push({
+        id: U.uid('toc'), text, level,
+        targetId: idByText[key] || null,
+        column, cat2, cat3,
+        page, manualPage: !!page, custom: true, source: 'import'
+      });
+    });
+    if (!entries.length) throw new Error('没识别到目录条目（每行应为「标题 …… 页码」）');
+    const pageLocked = entries.some(e => e.page);
+    state.tocEntries = entries;
+    state.tocImported = true;
+    render();
+    const msg = `已导入 ${entries.length} 条目录；点「重新提取目录」可恢复自动`;
+    U.toast(msg + (pageLocked ? '（页码已锁定）' : '（原文档无页码，页码按正文回填）'));
+    setStatus(msg, 'ok');
   }
 
   // 增加：新建一个可直接在预览里编辑的空白文档
@@ -1280,7 +1512,10 @@ const App = (() => {
   }
 
   // 重新提取目录：merge=true 时保留用户手动加的条目与手动锁定的页码
+  // v3.9：外部目录导入模式（整体替换）下，正文变化不再重新生成目录；
+  // 只有点「重新提取目录」才清除该模式。
   function buildToc(merge) {
+    if (state.tocImported && merge) return;
     let overrides = {}, customs = [];
     if (merge) {
       state.tocEntries.forEach(e => {
@@ -1464,7 +1699,7 @@ const App = (() => {
   }
 
   // ---------- 状态条 / 存档 ----------
-  const APP_VER = 'v3.8';
+  const APP_VER = 'v3.9.2';
   // v3.6 沿用 v3.5 的 key（不丢用户当前排版），在 applyArchive 里迁移旧页边距到新规格
   const STORE_KEY = 'kanwu_autosave_v3_5';
   let autoSaveTimer = null;
@@ -1483,10 +1718,10 @@ const App = (() => {
     return {
       app: '刊物内页排版工具', version: APP_VER, savedAt: new Date().toISOString(),
       page: state.page, docs: state.docs, tocEnabled: state.tocEnabled,
-      tocEntries: state.tocEntries, selectedDocId: state.selectedDocId,
+      tocEntries: state.tocEntries, tocImported: state.tocImported,
+      selectedDocId: state.selectedDocId,
       showGuides: state.showGuides, skin: state.skin,
       coverImg: state.coverImg, backImg: state.backImg,
-      coverPdf: state.coverPdf, backPdf: state.backPdf,
       categories: state.categories, qaDoneIssues: state.qaDoneIssues
     };
   }
@@ -1534,11 +1769,12 @@ const App = (() => {
     state.page = Object.assign({}, PAGE_DEFAULT, data.page || {});
     state.tocEnabled = data.tocEnabled !== false;
     state.tocEntries = Array.isArray(data.tocEntries) ? data.tocEntries : [];
+    state.tocImported = !!data.tocImported ||
+      state.tocEntries.some(e => e && e.source === 'import');
     state.selectedDocId = data.selectedDocId || (state.docs[0] && state.docs[0].id) || null;
     state.showGuides = !!data.showGuides;
     state.skin = data.skin === 'dark' ? 'dark' : 'light';
     state.coverImg = data.coverImg || ''; state.backImg = data.backImg || '';
-    state.coverPdf = data.coverPdf || ''; state.backPdf = data.backPdf || '';
     state.categories = Object.assign({}, DEFAULT_CATEGORIES, data.categories || {});
     state.qaDoneIssues = Array.isArray(data.qaDoneIssues) ? data.qaDoneIssues.slice() : [];
     migrateImageCaptions();
@@ -1562,28 +1798,67 @@ const App = (() => {
     r.readAsText(file, 'utf-8');
   }
 
+  // v3.9：自动保存三层保险——800ms 防抖写主档；退出 / 切后台强制立即落盘；
+  // 主档写满时清掉备份档重试并把失败明确告知用户（旧版 catch 空吞导致「以为存上了」）。
+  const BACKUP_KEY = STORE_KEY + '_bak';
+  let saveWarned = false;
+  function writeAutosave(keepBackup) {
+    if (!state.docs.length) return false;   // 空状态不覆盖已有存档
+    const json = JSON.stringify(serializeState());
+    try {
+      if (keepBackup) { const prev = localStorage.getItem(STORE_KEY); if (prev) localStorage.setItem(BACKUP_KEY, prev); }
+      localStorage.setItem(STORE_KEY, json);
+      saveWarned = false;
+      return true;
+    } catch (e) {
+      try {
+        localStorage.removeItem(BACKUP_KEY);
+        localStorage.setItem(STORE_KEY, json);
+        saveWarned = false;
+        return true;
+      } catch (e2) {
+        if (!saveWarned) {
+          saveWarned = true;
+          U.toast('自动保存失败：浏览器本地空间不足，请立刻点「💾 保存」下载存档');
+          setStatus('自动保存失败：本地空间不足，请用「保存」按钮下载 .json 存档', 'err');
+        }
+        return false;
+      }
+    }
+  }
   function autoSave() {
     clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(() => {
-      if (!state.docs.length) return;   // 空状态不覆盖已有存档
-      try { localStorage.setItem(STORE_KEY, JSON.stringify(serializeState())); } catch (e) {}
-    }, 800);
+    autoSaveTimer = setTimeout(() => writeAutosave(false), 800);
+  }
+  function flushAutosave() {
+    clearTimeout(autoSaveTimer);
+    writeAutosave(true);
   }
   // v3.4：质检勾选状态变化后即时落盘（内容未变，不触发重排 / 不打断编辑）
-  function persistQa() {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(serializeState())); } catch (e) {}
+  function persistQa() { writeAutosave(false); }
+
+  function bindAutosaveGuards() {
+    window.addEventListener('pagehide', flushAutosave);
+    window.addEventListener('beforeunload', flushAutosave);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flushAutosave();
+    });
   }
 
   function restoreAutoSave() {
-    try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (!raw) return false;
-      const data = JSON.parse(raw);
-      if (!data.docs || !data.docs.length) return false;
-      applyArchive(data);
-      setStatus(`已自动恢复上次进度：${state.docs.length} 篇文档（要重来请点「清空」）`, 'busy');
-      return true;
-    } catch (e) { return false; }
+    const keys = [STORE_KEY, BACKUP_KEY];
+    for (const key of keys) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const data = JSON.parse(raw);
+        if (!data.docs || !data.docs.length) continue;
+        applyArchive(data);
+        setStatus(`已自动恢复上次进度：${state.docs.length} 篇文档${key === BACKUP_KEY ? '（主存档读取失败，已用应急备份）' : ''}（要重来请点「清空」）`, 'busy');
+        return true;
+      } catch (e) { console.warn('自动存档读取失败：' + key, e); }
+    }
+    return false;
   }
 
   function bindUI() {
@@ -1612,6 +1887,12 @@ const App = (() => {
       e.target.value = '';
     });
     $('btnAddDoc').addEventListener('click', addEmptyDoc);
+    // v3.9：文件夹上传（按子文件夹名自动分类）
+    const folderBtn = $('btnUploadFolder'), folderInput = $('folderInput');
+    if (folderBtn && folderInput) {
+      folderBtn.addEventListener('click', () => folderInput.click());
+      folderInput.addEventListener('change', e => { onFolderSelected(e.target); });
+    }
     // v3.7：三级栏目筛选（联动：改一级重置二三级，改二级重置三级）
     const bindFilter = (id, key, resetAfter) => {
       const el = $(id); if (!el) return;
@@ -1626,8 +1907,8 @@ const App = (() => {
     bindFilter('filterCat3', 'c3', []);
     $('btnResort').addEventListener('click', () => {
       if (state.docs.length < 2) { U.toast('文档不足 2 个，无需重排'); return; }
-      sortDocs(); render();
-      U.toast('已按文件名序号重排');
+      sortDocs(); buildToc(true); render();
+      U.toast('已按文件名序号重排（目录已同步）');
     });
     $('btnReTemplate').addEventListener('click', () => {
       if (!state.docs.length) { U.toast('请先上传或增加文档'); return; }
@@ -1647,7 +1928,8 @@ const App = (() => {
       if (confirm('确定清空当前内容？')) {
         state.docs = []; state.tocEntries = []; state.selectedDocId = null;
         state.blockMap = {}; lastPageLabels = {}; state.qaDoneIssues = [];
-        try { localStorage.removeItem(STORE_KEY); } catch (e) {}
+        state.tocImported = false;
+        try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(BACKUP_KEY); } catch (e) {}
         render();
         setStatus('已清空，可上传文件、点「📂 打开」存档，或按 Ctrl+Z 撤销本次清空');
       }
@@ -1788,15 +2070,16 @@ const App = (() => {
 
     // 页面设置
     const bindNum = (id, key) => $(id).addEventListener('input', e => {
-      state.page[key] = parseFloat(e.target.value) || 0; render();
+      state.page[key] = parseFloat(e.target.value) || 0; scheduleRender();
     });
     bindNum('pgW', 'w'); bindNum('pgH', 'h');
     bindNum('mgT', 'mt'); bindNum('mgB', 'mb');
     bindNum('mgL', 'ml'); bindNum('mgR', 'mr');
     $('cols').addEventListener('change', e => { state.page.cols = parseInt(e.target.value, 10); render(); });
     $('lineH').addEventListener('change', e => { state.page.lineH = parseFloat(e.target.value); render(); });
-    $('hdrText').addEventListener('input', e => { state.page.hdr = e.target.value; render(); });
-    $('ftrText').addEventListener('input', e => { state.page.ftr = e.target.value; render(); });
+    // v3.9：页眉页脚每敲一字都全量重排是后期卡顿的放大器，改为防抖
+    $('hdrText').addEventListener('input', e => { state.page.hdr = e.target.value; scheduleRender(); });
+    $('ftrText').addEventListener('input', e => { state.page.ftr = e.target.value; scheduleRender(); });
     $('showPgNum').addEventListener('change', e => { state.page.showNum = e.target.checked; render(); });
     $('tocEnabled').addEventListener('change', e => { state.tocEnabled = e.target.checked; render(); });
 
@@ -1811,9 +2094,8 @@ const App = (() => {
       });
     }
 
-    // v3.8.1：封面 / 封底上传（图片 或 PDF）。PDF 存原始 base64 供矢量合并，
-    // 同时用 pdf.js 渲染首页为图片供预览/打印显示。
-    const pdfState = { cover: 'coverPdf', back: 'backPdf' };
+    // v3.9：封面 / 封底上传（图片 或 PDF）。PDF 只用 pdf.js 渲染首页作图片，
+    // 不再保存 PDF 原始 base64（矢量合并功能已删除，base64 会撑爆本地存档）。
     const renderPdfFirstPage = (arrayBuf) => new Promise((resolve, reject) => {
       try {
         if (!window.pdfjsLib) { reject(new Error('PDF 组件未加载')); return; }
@@ -1835,7 +2117,6 @@ const App = (() => {
     });
     const bindCover = (inputId, clearId, kind, imgKey) => {
       const inp = $(inputId), clr = $(clearId);
-      const pdfKey = pdfState[kind];
       if (!inp) return;
       inp.addEventListener('change', e => {
         const f = e.target.files[0]; if (!f) return;
@@ -1844,7 +2125,6 @@ const App = (() => {
         r.onload = () => {
           const finish = (displayDataUrl) => {
             state[imgKey] = displayDataUrl;
-            state[pdfKey] = isPdf ? r.result : '';   // 原始 base64（含 data: 前缀）
             if (clr) clr.hidden = false;
             render();
             U.toast((kind === 'cover' ? '封面' : '封底') + '已上传（' + (isPdf ? 'PDF' : '图片') + '）');
@@ -1868,73 +2148,57 @@ const App = (() => {
       });
       if (clr) clr.addEventListener('click', () => {
         state[imgKey] = '';
-        state[pdfKey] = '';
         clr.hidden = true;
         render(); U.toast('已移除' + (kind === 'cover' ? '封面' : '封底'));
       });
-      if (clr && (state[imgKey] || state[pdfKey])) clr.hidden = false;
+      if (clr && state[imgKey]) clr.hidden = false;
     };
     bindCover('coverInput', 'coverClear', 'cover', 'coverImg');
     bindCover('backInput', 'backClear', 'back', 'backImg');
 
-    // v3.8.1：合并封面封底（真矢量）。用户先用「导出PDF（矢量）」导出正文PDF，
-    // 再点本按钮选择该正文PDF，工具把 封面PDF + 正文PDF + 封底PDF 合成成品。
-    const btnMerge = $('btnMergeCover');
-    if (btnMerge) btnMerge.addEventListener('click', () => {
-      if (!state.coverPdf && !state.backPdf) {
-        U.toast('请先上传 PDF 格式的封面或封底'); return;
-      }
-      if (!window.PDFLib || !window.PDFLib.PDFDocument) {
-        U.toast('PDF 合并组件未加载'); return;
-      }
-      // 动态建一个隐藏 file input 让用户选正文 PDF
-      const pick = document.createElement('input');
-      pick.type = 'file'; pick.accept = 'application/pdf,.pdf';
-      pick.style.display = 'none';
-      document.body.appendChild(pick);
-      pick.addEventListener('change', async ev => {
-        const bodyFile = ev.target.files[0];
-        document.body.removeChild(pick);
-        if (!bodyFile) return;
-        try {
-          setStatus('正在合并封面 / 正文 / 封底 PDF…', 'busy');
-          const arrBuf = await bodyFile.arrayBuffer();
-          const b64toAB = (dataUrl) => {
-            const b64 = String(dataUrl).split(',')[1] || '';
-            const bin = atob(b64); const bytes = new Uint8Array(bin.length);
-            for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-            return bytes.buffer;
-          };
-          const merged = await window.PDFLib.PDFDocument.create();
-          // 按 封面 → 正文 → 封底 顺序拷贝所有页
-          const sources = [];
-          if (state.coverPdf) sources.push({ name: '封面', data: b64toAB(state.coverPdf) });
-          sources.push({ name: '正文', data: arrBuf });
-          if (state.backPdf) sources.push({ name: '封底', data: b64toAB(state.backPdf) });
-          for (const src of sources) {
-            const doc = await window.PDFLib.PDFDocument.load(src.data, { ignoreEncryption: true });
-            const pages = await merged.copyPages(doc, doc.getPageIndices());
-            pages.forEach(p => merged.addPage(p));
-          }
-          const outBytes = await merged.save();
-          const blob = new Blob([outBytes], { type: 'application/pdf' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url; a.download = '刊物成品_含封面封底.pdf';
-          document.body.appendChild(a); a.click(); document.body.removeChild(a);
-          setTimeout(() => URL.revokeObjectURL(url), 4000);
-          setStatus('合并完成：封面 + 正文 + 封底 已导出为单个 PDF', 'ok');
-          U.toast('已导出含封面封底的完整 PDF');
-        } catch (err) {
-          console.error(err);
-          setStatus('合并失败：' + err.message, 'err');
-          U.toast('合并失败：' + err.message);
-        }
+    $('btnRegenToc').addEventListener('click', () => {
+      // v3.9：退出外部目录模式。外部条目全部清除，但非导入的锁页 / 自定义条目保留
+      const keep = state.tocEntries.filter(e => e.source !== 'import');
+      const overrides = {}, customs = [];
+      keep.forEach(e => {
+        if (e.manualPage && e.targetId) overrides[e.targetId] = e.page;
+        if (e.custom) customs.push(e);
       });
-      pick.click();
+      state.tocImported = false;
+      buildToc(false);
+      state.tocEntries.forEach(e => {
+        if (overrides[e.targetId] != null) { e.page = overrides[e.targetId]; e.manualPage = true; }
+      });
+      state.tocEntries.push(...customs);
+      render();
+      U.toast('已恢复自动目录（外部导入条目已清除，手工条目保留）');
     });
-    $('btnRegenToc').addEventListener('click', () => { buildToc(true); render(); U.toast('已重新提取目录（保留手动调整）'); });
-    $('btnAddToc').addEventListener('click', () => { addTocEntry(); U.toast('已添加手工目录条目'); });
+    const importBtn = $('btnImportToc'), importInput = $('tocInputFile');
+    if (importBtn && importInput) {
+      importBtn.addEventListener('click', () => importInput.click());
+      importInput.addEventListener('change', e => {
+        const f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        if (!f) return;
+        U.toast('正在读取目录文档…');
+        importTocFile(f).catch(err => {
+          console.error(err);
+          const msg = err.message || '格式不正确';
+          U.toast('目录导入失败：' + msg);
+          setStatus('目录导入失败：' + msg, 'err');
+        });
+      });
+    }
+    $('btnAddToc').addEventListener('click', () => {
+      if (!tocListOpen) { tocListOpen = true; const t = $('btnToggleTocList'); if (t) t.textContent = '▾ 收起条目'; }
+      addTocEntry(); U.toast('已添加手工目录条目，可在下方列表编辑');
+    });
+    const tocToggle = $('btnToggleTocList');
+    if (tocToggle) tocToggle.addEventListener('click', () => {
+      tocListOpen = !tocListOpen;
+      tocToggle.textContent = tocListOpen ? '▾ 收起条目' : '▸ 展开条目';
+      renderTocList();
+    });
 
     // ---- v3.5 V5：①③ 面板折叠 ----
     document.querySelectorAll('.fold-head').forEach(h => {
@@ -1955,6 +2219,7 @@ const App = (() => {
     bindUI();
     Editor.init();
     bindCompositionGuard();
+    bindAutosaveGuards();   // v3.9：离开页面前强制落盘，缩小崩溃丢稿窗口
     applySkin();   // v3.8 P1：应用默认浅色 / 存档深色皮肤
     const ver = $('appVer'); if (ver) ver.textContent = APP_VER;
     // 任何脚本错误都直接显示在状态条上，避免「点了没反应」却看不到原因

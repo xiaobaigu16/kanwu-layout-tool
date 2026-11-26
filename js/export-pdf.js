@@ -91,6 +91,8 @@ const ExportPdf = (() => {
     // v3.2：辅助线、溢出红框只属于编辑器画布，不能进导出的 PDF
     c.classList.remove('show-guides', 'page-overflow');
     c.querySelectorAll('[contenteditable]').forEach(n => n.removeAttribute('contenteditable'));
+    // v3.9.1：段落抓握手柄是编辑器 UI，不能进 PDF / 分享预览
+    c.querySelectorAll('.blk-drag-handle').forEach(n => n.remove());
     // v3.3：质检定位高亮不能进导出 PDF
     c.querySelectorAll('.qa-flash').forEach(n => n.classList.remove('qa-flash'));
     c.querySelectorAll('[data-cap]').forEach(inp => {
@@ -119,6 +121,8 @@ const ExportPdf = (() => {
 
     const host = makeSnapshotHost();
     const images = [];
+    // v3.9.1：位图 / 分享预览也套用「真粗体回退 + 描边」，避免只修打印链路
+    document.body.classList.add('export-bold');
     try {
       for (const el of els) {
         const clone = cleanClone(el);
@@ -138,6 +142,7 @@ const ExportPdf = (() => {
         host.removeChild(clone);
       }
     } finally {
+      document.body.classList.remove('export-bold');
       host.remove();
     }
     cache = { key, images };
